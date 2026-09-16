@@ -34,9 +34,30 @@ export const activities = mysqlTable("activities", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
+export const chatSessions = mysqlTable("chatSessions", {
+  id: varchar("id", { length: 64 }).primaryKey(),
+  leadId: int("leadId"),
+  name: varchar("name", { length: 160 }),
+  email: varchar("email", { length: 320 }),
+  company: varchar("company", { length: 180 }),
+  goal: text("goal"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export const chatMessages = mysqlTable("chatMessages", {
+  id: int("id").autoincrement().primaryKey(),
+  sessionId: varchar("sessionId", { length: 64 }).notNull(),
+  role: mysqlEnum("role", ["user", "assistant"]).notNull(),
+  content: text("content").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 export type Lead = typeof leads.$inferSelect;
 export type InsertLead = typeof leads.$inferInsert;
 export type Activity = typeof activities.$inferSelect;
 export type InsertActivity = typeof activities.$inferInsert;
+export type ChatSession = typeof chatSessions.$inferSelect;
+export type ChatMessage = typeof chatMessages.$inferSelect;

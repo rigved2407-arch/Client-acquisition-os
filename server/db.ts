@@ -1,6 +1,6 @@
-import { desc, eq } from "drizzle-orm";
+import { asc, desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { activities, Activity, InsertLead, InsertUser, leads, users } from "../drizzle/schema";
+import { activities, Activity, chatMessages, chatSessions, ChatMessage, ChatSession, InsertLead, InsertUser, leads, users } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -93,3 +93,35 @@ export async function getLeadById(leadId: number) {
 }
 
 export type ActivityRecord = Activity;
+
+export async function getChatSession(sessionId: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  const result = await db.select().from(chatSessions).where(eq(chatSessions.id, sessionId)).limit(1);
+  return result[0];
+}
+
+export async function createChatSession(sessionId: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  await db.insert(chatSessions).values({ id: sessionId });
+}
+
+export async function updateChatSession(sessionId: string, input: Partial<Pick<ChatSession, "leadId" | "name" | "email" | "company" | "goal">>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  await db.update(chatSessions).set(input).where(eq(chatSessions.id, sessionId));
+}
+
+export async function getChatMessages(sessionId: string, limit = 12) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  return db.select().from(chatMessages).where(eq(chatMessages.sessionId, sessionId)).orderBy(asc(chatMessages.createdAt)).limit(limit);
+}
+
+export async function createChatMessage(input: { sessionId: string; role: "user" | "assistant"; content: string }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  const result = await db.insert(chatMessages).values(input);
+  return Number(result[0].insertId);
+}

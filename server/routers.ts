@@ -4,7 +4,7 @@ import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
-import { createLead, createLeadActivity, getActivities, getLeadById, getLeads, updateLeadQualification } from "./db";
+import { createChatMessage, createChatSession, createLead, createLeadActivity, getActivities, getChatMessages, getChatSession, getLeadById, getLeads, updateChatSession, updateLeadQualification } from "./db";
 
 const demoLeads = [
   { id: 101, name: "Avery Cole", email: "avery@coleadvisory.com", company: "Cole Advisory", source: "LinkedIn", goal: "Build a predictable client pipeline", stage: "qualified", score: 92, createdAt: new Date("2026-09-16T14:20:00Z"), lastActivityAt: new Date("2026-09-17T02:40:00Z") },
@@ -34,6 +34,11 @@ const leadInput = z.object({
   company: z.string().trim().max(180).optional(),
   goal: z.string().trim().min(10).max(2000),
   source: z.string().trim().max(80).default("Website"),
+});
+
+const chatInput = z.object({
+  sessionId: z.string().trim().min(8).max(64),
+  message: z.string().trim().min(1).max(2000),
 });
 
 async function qualifyWithAI(input: z.infer<typeof leadInput>) {
@@ -70,6 +75,44 @@ async function qualifyWithAI(input: z.infer<typeof leadInput>) {
   }
 }
 
+async function replyWithAI(input: { message: string; history: Array<{ role: "user" | "assistant"; content: string }>; profile: { name?: string | null; email?: string | null; company?: string | null; goal?: string | null } }) {
+  try {
+    const response = await invokeLLM({
+      messages: [
+        { role: "system", content: "You are CoachFlow, a warm and concise AI concierge for a coaching business. Understand a prospect's goal and collect their name, work email, company or brand, and desired outcome. Ask only one short question at a time. Do not pressure, diagnose, or promise results. Once you have name, valid email, and a clear goal, thank them and say a coach will review their answers. Return only JSON." },
+        { role: "user", content: `Known profile: ${JSON.stringify(input.profile)}\nConversation:\n${input.history.map((item) => `${item.role}: ${item.content}`).join("\n")}\nNew message: ${input.message}` },
+      ],
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "concierge_reply",
+          strict: true,
+          schema: {
+            type: "object",
+            properties: {
+              reply: { type: "string" },
+              name: { type: ["string", "null"] },
+              email: { type: ["string", "null"] },
+              company: { type: ["string", "null"] },
+              goal: { type: ["string", "null"] },
+              ready: { type: "boolean" },
+              score: { type: "integer" },
+            },
+            required: ["reply", "name", "email", "company", "goal", "ready", "score"],
+            additionalProperties: false,
+          },
+        },
+      },
+    });
+    const content = response.choices?.[0]?.message?.content;
+    const parsed = JSON.parse(typeof content === "string" ? content : "{}");
+    return { reply: String(parsed.reply || "Thanks for sharing. What would you like to improve first?"), name: parsed.name || null, email: parsed.email || null, company: parsed.company || null, goal: parsed.goal || null, ready: Boolean(parsed.ready), score: Math.max(0, Math.min(100, Number(parsed.score) || 0)) };
+  } catch {
+    const email = input.message.match(/[\w.+-]+@[\w-]+\.[\w.-]+/)?.[0] ?? null;
+    return { reply: email ? "Thanks — I have your email. What is the biggest outcome you want help creating in the next 90 days?" : "I can help with that. What is the biggest outcome you want help creating in the next 90 days?", name: input.profile.name || null, email, company: input.profile.company || null, goal: input.profile.goal || null, ready: false, score: 0 };
+  }
+}
+
 export const appRouter = router({
   system: systemRouter,
   auth: router({
@@ -97,6 +140,31 @@ export const appRouter = router({
       return { success: true, lead, qualification };
     }),
     qualifyLead: publicProcedure.input(z.object({ transcript: z.string().min(10) })).mutation(async ({ input }) => qualifyWithAI({ name: "Prospect", email: "prospect@example.com", goal: input.transcript, source: "Manual test" })),
+    chat: publicProcedure.input(chatInput).mutation(async ({ input }) => {
+      let session = await getChatSession(input.sessionId);
+      if (!session) {
+        await createChatSession(input.sessionId);
+        session = await getChatSession(input.sessionId);
+      }
+      if (!session) throw new Error("Could not start chat session");
+
+      const history = await getChatMessages(input.sessionId);
+      await createChatMessage({ sessionId: input.sessionId, role: "user", content: input.message });
+      const result = await replyWithAI({ message: input.message, history, profile: session });
+      const nextProfile = { name: result.name || session.name, email: result.email || session.email, company: result.company || session.company, goal: result.goal || session.goal };
+      await updateChatSession(input.sessionId, nextProfile);
+
+      let lead = session.leadId ? await getLeadById(session.leadId) : undefined;
+      if (!lead && result.ready && nextProfile.name && nextProfile.email && nextProfile.goal) {
+        const leadId = await createLead({ name: nextProfile.name, email: nextProfile.email, company: nextProfile.company || undefined, source: "AI concierge", goal: nextProfile.goal, stage: "new", score: 0 });
+        await updateLeadQualification(leadId, "qualified", result.score);
+        await createLeadActivity({ leadId, type: "qualified", title: `${nextProfile.name} was qualified by AI concierge`, description: `Conversation captured · ${result.score}/100 intent score` });
+        await updateChatSession(input.sessionId, { leadId });
+        lead = await getLeadById(leadId);
+      }
+      await createChatMessage({ sessionId: input.sessionId, role: "assistant", content: result.reply });
+      return { reply: result.reply, profile: nextProfile, leadCreated: Boolean(lead && !session.leadId), lead };
+    }),
   }),
 });
 
