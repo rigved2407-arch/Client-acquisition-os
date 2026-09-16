@@ -59,7 +59,7 @@ export default function Home() {
           <a className="flex items-center gap-3 rounded-xl bg-[#e8f3d8] px-3 py-2.5 text-sm font-medium text-[#173b2d]"><LayoutDashboard className="h-4 w-4" /> Overview</a>
           <a className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-[#6d786e] hover:bg-[#f0f3ed]"><Users className="h-4 w-4" /> Leads <span className="ml-auto rounded-full bg-[#eef1ea] px-2 py-0.5 text-[10px]">{stats?.totalLeads ?? 0}</span></a>
           <a className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-[#6d786e] hover:bg-[#f0f3ed]"><Zap className="h-4 w-4" /> Automations <span className="ml-auto h-2 w-2 rounded-full bg-[#9fca4d]" /></a>
-          <a className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-[#6d786e] hover:bg-[#f0f3ed]"><CalendarDays className="h-4 w-4" /> Calendar</a>
+          <a href="/calendar" className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-[#6d786e] hover:bg-[#f0f3ed]"><CalendarDays className="h-4 w-4" /> Calendar</a>
         </nav>
         <p className="px-3 mb-2 mt-8 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#9aa49b]">Insights</p>
         <nav className="space-y-1">

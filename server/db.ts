@@ -78,6 +78,12 @@ export async function updateLeadQualification(leadId: number, stage: "new" | "qu
   await db.update(leads).set({ stage, score, lastActivityAt: new Date() }).where(eq(leads.id, leadId));
 }
 
+export async function updateLeadStage(leadId: number, stage: "new" | "qualified" | "booked" | "won" | "nurture") {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  await db.update(leads).set({ stage, lastActivityAt: new Date() }).where(eq(leads.id, leadId));
+}
+
 export async function createLeadActivity(input: { leadId: number; type: string; title: string; description: string }) {
   const db = await getDb();
   if (!db) throw new Error("Database is not available");

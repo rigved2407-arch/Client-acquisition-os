@@ -4,7 +4,9 @@ import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
-import { createChatMessage, createChatSession, createLead, createLeadActivity, getActivities, getChatMessages, getChatSession, getLeadById, getLeads, updateChatSession, updateLeadQualification } from "./db";
+import { createChatMessage, createChatSession, createLead, createLeadActivity, createAppointment, getActivities, getCalendarConnection, getChatMessages, getChatSession, getLeadById, getLeads, updateChatSession, updateLeadQualification, updateLeadStage } from "./db";
+import { createGoogleEvent, getGoogleConnectUrl, listBusyEvents } from "./googleCalendar";
+import { ENV } from "./_core/env";
 
 const demoLeads = [
   { id: 101, name: "Avery Cole", email: "avery@coleadvisory.com", company: "Cole Advisory", source: "LinkedIn", goal: "Build a predictable client pipeline", stage: "qualified", score: 92, createdAt: new Date("2026-09-16T14:20:00Z"), lastActivityAt: new Date("2026-09-17T02:40:00Z") },
@@ -164,6 +166,48 @@ export const appRouter = router({
       }
       await createChatMessage({ sessionId: input.sessionId, role: "assistant", content: result.reply });
       return { reply: result.reply, profile: nextProfile, leadCreated: Boolean(lead && !session.leadId), lead };
+    }),
+  }),
+  calendar: router({
+    connect: protectedProcedure.query(({ ctx }) => ({ url: getGoogleConnectUrl(ctx.req, ctx.user.openId) })),
+    status: protectedProcedure.query(async ({ ctx }) => ({ connected: Boolean(await getCalendarConnection(ctx.user.openId)) })),
+    availability: publicProcedure.input(z.object({ from: z.string().datetime().optional() })).query(async ({ input }) => {
+      const ownerOpenId = ENV.ownerOpenId;
+      const connection = await getCalendarConnection(ownerOpenId);
+      if (!connection) return { connected: false, slots: [] };
+      const from = input.from ? new Date(input.from) : new Date(Date.now() + 60 * 60 * 1000);
+      const to = new Date(from.getTime() + 14 * 24 * 60 * 60 * 1000);
+      const busy = await listBusyEvents(ownerOpenId, from.toISOString(), to.toISOString());
+      const slots: Array<{ startsAt: string; endsAt: string; label: string }> = [];
+      const cursor = new Date(from);
+      cursor.setUTCMinutes(Math.ceil(cursor.getUTCMinutes() / 30) * 30, 0, 0);
+      for (let day = 0; day < 14; day++) {
+        const date = new Date(cursor);
+        date.setUTCDate(cursor.getUTCDate() + day);
+        if ([0, 6].includes(date.getUTCDay())) continue;
+        for (let hour = 9; hour < 17; hour++) {
+          for (const minute of [0, 30]) {
+            const startsAt = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), hour, minute));
+            const endsAt = new Date(startsAt.getTime() + 30 * 60 * 1000);
+            if (startsAt <= from || startsAt >= to) continue;
+            const overlaps = busy.some((event) => event.start && event.end && new Date(event.start).getTime() < endsAt.getTime() && new Date(event.end).getTime() > startsAt.getTime());
+            if (!overlaps) slots.push({ startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString(), label: startsAt.toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) });
+          }
+        }
+      }
+      return { connected: true, slots: slots.slice(0, 24) };
+    }),
+    book: publicProcedure.input(z.object({ leadId: z.number().int().positive(), startsAt: z.string().datetime(), endsAt: z.string().datetime() })).mutation(async ({ input }) => {
+      const lead = await getLeadById(input.leadId);
+      if (!lead) throw new Error("Lead not found");
+      const startsAt = new Date(input.startsAt);
+      const endsAt = new Date(input.endsAt);
+      if (startsAt <= new Date() || endsAt <= startsAt || endsAt.getTime() - startsAt.getTime() > 60 * 60 * 1000) throw new Error("Invalid appointment time");
+      const event = await createGoogleEvent(ENV.ownerOpenId, { summary: `Strategy call with ${lead.name}`, description: `CoachFlow qualified lead.\nGoal: ${lead.goal || "Not provided"}\nSource: ${lead.source}`, startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString(), attendeeName: lead.name, attendeeEmail: lead.email });
+      await createAppointment({ leadId: lead.id, ownerOpenId: ENV.ownerOpenId, provider: "google", providerEventId: event.id, startsAt, endsAt, inviteeName: lead.name, inviteeEmail: lead.email, status: "confirmed" });
+      await updateLeadStage(lead.id, "booked");
+      await createLeadActivity({ leadId: lead.id, type: "booked", title: `${lead.name} booked a strategy call`, description: `${startsAt.toLocaleString()} · Google Calendar` });
+      return { success: true, eventId: event.id, htmlLink: event.htmlLink, hangoutLink: event.hangoutLink, startsAt: startsAt.toISOString() };
     }),
   }),
 });
