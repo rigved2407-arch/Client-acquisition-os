@@ -1,4 +1,4 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
+import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, boolean } from "drizzle-orm/mysql-core";
 
 export const users = mysqlTable("users", {
   id: int("id").autoincrement().primaryKey(),
@@ -17,8 +17,10 @@ export const leads = mysqlTable("leads", {
   name: varchar("name", { length: 160 }).notNull(),
   email: varchar("email", { length: 320 }).notNull(),
   company: varchar("company", { length: 180 }),
+  instagramHandle: varchar("instagramHandle", { length: 120 }),
   source: varchar("source", { length: 80 }).notNull(),
   goal: text("goal"),
+  consentAt: timestamp("consentAt"),
   stage: mysqlEnum("stage", ["new", "qualified", "booked", "won", "nurture"]).default("new").notNull(),
   score: int("score").default(0).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -80,13 +82,38 @@ export const appointments = mysqlTable("appointments", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
+export const webhookSources = mysqlTable("webhookSources", {
+  id: int("id").autoincrement().primaryKey(),
+  ownerOpenId: varchar("ownerOpenId", { length: 64 }).notNull(),
+  name: varchar("name", { length: 120 }).notNull(),
+  source: varchar("source", { length: 80 }).notNull().default("Form webhook"),
+  tokenHash: varchar("tokenHash", { length: 128 }).notNull().unique(),
+  enabled: boolean("enabled").default(true).notNull(),
+  lastReceivedAt: timestamp("lastReceivedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export const automationTasks = mysqlTable("automationTasks", {
+  id: int("id").autoincrement().primaryKey(),
+  leadId: int("leadId").notNull(),
+  type: varchar("type", { length: 80 }).notNull(),
+  status: mysqlEnum("status", ["pending", "sent", "cancelled", "failed"]).default("pending").notNull(),
+  sendAt: timestamp("sendAt").notNull(),
+  payload: text("payload"),
+  attempts: int("attempts").default(0).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 export type Lead = typeof leads.$inferSelect;
 export type InsertLead = typeof leads.$inferInsert;
 export type Activity = typeof activities.$inferSelect;
-export type InsertActivity = typeof activities.$inferInsert;
+export type InsertActivity = typeof activities.$inferSelect;
 export type ChatSession = typeof chatSessions.$inferSelect;
 export type ChatMessage = typeof chatMessages.$inferSelect;
 export type CalendarConnection = typeof calendarConnections.$inferSelect;
 export type Appointment = typeof appointments.$inferSelect;
+export type WebhookSource = typeof webhookSources.$inferSelect;
+export type AutomationTask = typeof automationTasks.$inferSelect;

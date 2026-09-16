@@ -1,6 +1,6 @@
 import { asc, desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { activities, Activity, appointments, calendarConnections, chatMessages, chatSessions, ChatSession, InsertLead, InsertUser, leads, users } from "../drizzle/schema";
+import { activities, Activity, appointments, automationTasks, calendarConnections, chatMessages, chatSessions, ChatSession, InsertLead, InsertUser, leads, users, webhookSources } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -160,4 +160,50 @@ export async function createAppointment(input: typeof appointments.$inferInsert)
   if (!db) throw new Error("Database is not available");
   const result = await db.insert(appointments).values(input);
   return Number(result[0].insertId);
+}
+
+export async function getLeadByEmail(email: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  const result = await db.select().from(leads).where(eq(leads.email, email)).limit(1);
+  return result[0];
+}
+
+export async function createWebhookSource(input: typeof webhookSources.$inferInsert) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  const result = await db.insert(webhookSources).values(input);
+  return Number(result[0].insertId);
+}
+
+export async function listWebhookSources(ownerOpenId: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  return db.select().from(webhookSources).where(eq(webhookSources.ownerOpenId, ownerOpenId)).orderBy(desc(webhookSources.createdAt));
+}
+
+export async function getWebhookSourceByHash(tokenHash: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  const result = await db.select().from(webhookSources).where(eq(webhookSources.tokenHash, tokenHash)).limit(1);
+  return result[0];
+}
+
+export async function touchWebhookSource(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  await db.update(webhookSources).set({ lastReceivedAt: new Date() }).where(eq(webhookSources.id, id));
+}
+
+export async function createAutomationTask(input: typeof automationTasks.$inferInsert) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  const result = await db.insert(automationTasks).values(input);
+  return Number(result[0].insertId);
+}
+
+export async function listAutomationTasks(limit = 50) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  return db.select().from(automationTasks).orderBy(asc(automationTasks.sendAt)).limit(limit);
 }

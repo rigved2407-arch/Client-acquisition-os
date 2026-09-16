@@ -7,6 +7,8 @@ import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
 import { createChatMessage, createChatSession, createLead, createLeadActivity, createAppointment, getActivities, getCalendarConnection, getChatMessages, getChatSession, getLeadById, getLeads, updateChatSession, updateLeadQualification, updateLeadStage } from "./db";
 import { createGoogleEvent, getGoogleConnectUrl, listBusyEvents } from "./googleCalendar";
 import { ENV } from "./_core/env";
+import { createWebhookSource, listAutomationTasks, listWebhookSources } from "./db";
+import { createWebhookToken, tokenHash } from "./webhooks";
 
 const demoLeads = [
   { id: 101, name: "Avery Cole", email: "avery@coleadvisory.com", company: "Cole Advisory", source: "LinkedIn", goal: "Build a predictable client pipeline", stage: "qualified", score: 92, createdAt: new Date("2026-09-16T14:20:00Z"), lastActivityAt: new Date("2026-09-17T02:40:00Z") },
@@ -208,6 +210,15 @@ export const appRouter = router({
       await updateLeadStage(lead.id, "booked");
       await createLeadActivity({ leadId: lead.id, type: "booked", title: `${lead.name} booked a strategy call`, description: `${startsAt.toLocaleString()} · Google Calendar` });
       return { success: true, eventId: event.id, htmlLink: event.htmlLink, hangoutLink: event.hangoutLink, startsAt: startsAt.toISOString() };
+    }),
+  }),
+  automation: router({
+    sources: protectedProcedure.query(({ ctx }) => listWebhookSources(ctx.user.openId)),
+    tasks: protectedProcedure.query(() => listAutomationTasks()),
+    createSource: protectedProcedure.input(z.object({ name: z.string().trim().min(2).max(120), source: z.string().trim().min(2).max(80) })).mutation(async ({ ctx, input }) => {
+      const token = createWebhookToken();
+      const id = await createWebhookSource({ ownerOpenId: ctx.user.openId, name: input.name, source: input.source, tokenHash: tokenHash(token), enabled: true });
+      return { id, token, path: `/api/webhooks/${token}` };
     }),
   }),
 });
