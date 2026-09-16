@@ -1,6 +1,6 @@
 import { asc, desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { activities, Activity, chatMessages, chatSessions, ChatMessage, ChatSession, InsertLead, InsertUser, leads, users } from "../drizzle/schema";
+import { activities, Activity, appointments, calendarConnections, chatMessages, chatSessions, ChatSession, InsertLead, InsertUser, leads, users } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -123,5 +123,35 @@ export async function createChatMessage(input: { sessionId: string; role: "user"
   const db = await getDb();
   if (!db) throw new Error("Database is not available");
   const result = await db.insert(chatMessages).values(input);
+  return Number(result[0].insertId);
+}
+
+export async function getCalendarConnection(ownerOpenId: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  const result = await db.select().from(calendarConnections).where(eq(calendarConnections.ownerOpenId, ownerOpenId)).limit(1);
+  return result[0];
+}
+
+export async function saveCalendarConnection(input: typeof calendarConnections.$inferInsert) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  await db.insert(calendarConnections).values(input).onDuplicateKeyUpdate({
+    set: {
+      provider: input.provider,
+      calendarId: input.calendarId,
+      calendarName: input.calendarName,
+      accessToken: input.accessToken,
+      refreshToken: input.refreshToken,
+      tokenExpiresAt: input.tokenExpiresAt,
+      updatedAt: new Date(),
+    },
+  });
+}
+
+export async function createAppointment(input: typeof appointments.$inferInsert) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  const result = await db.insert(appointments).values(input);
   return Number(result[0].insertId);
 }

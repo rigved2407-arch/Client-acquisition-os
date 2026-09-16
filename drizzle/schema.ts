@@ -53,6 +53,33 @@ export const chatMessages = mysqlTable("chatMessages", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
+export const calendarConnections = mysqlTable("calendarConnections", {
+  id: int("id").autoincrement().primaryKey(),
+  ownerOpenId: varchar("ownerOpenId", { length: 64 }).notNull().unique(),
+  provider: varchar("provider", { length: 40 }).notNull().default("google"),
+  calendarId: varchar("calendarId", { length: 320 }).notNull().default("primary"),
+  calendarName: varchar("calendarName", { length: 180 }),
+  accessToken: text("accessToken").notNull(),
+  refreshToken: text("refreshToken").notNull(),
+  tokenExpiresAt: timestamp("tokenExpiresAt").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export const appointments = mysqlTable("appointments", {
+  id: int("id").autoincrement().primaryKey(),
+  leadId: int("leadId").notNull(),
+  ownerOpenId: varchar("ownerOpenId", { length: 64 }).notNull(),
+  provider: varchar("provider", { length: 40 }).notNull().default("google"),
+  providerEventId: varchar("providerEventId", { length: 320 }).notNull(),
+  startsAt: timestamp("startsAt").notNull(),
+  endsAt: timestamp("endsAt").notNull(),
+  inviteeName: varchar("inviteeName", { length: 160 }).notNull(),
+  inviteeEmail: varchar("inviteeEmail", { length: 320 }).notNull(),
+  status: mysqlEnum("status", ["confirmed", "cancelled"]).default("confirmed").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 export type Lead = typeof leads.$inferSelect;
@@ -61,3 +88,5 @@ export type Activity = typeof activities.$inferSelect;
 export type InsertActivity = typeof activities.$inferInsert;
 export type ChatSession = typeof chatSessions.$inferSelect;
 export type ChatMessage = typeof chatMessages.$inferSelect;
+export type CalendarConnection = typeof calendarConnections.$inferSelect;
+export type Appointment = typeof appointments.$inferSelect;
