@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import type { Express } from "express";
 import { invokeLLM } from "./_core/llm";
-import { createAutomationTask, createLead, createLeadActivity, getLeadByEmail, getWebhookSourceByHash, touchWebhookSource, updateLeadQualification } from "./db";
+import { createAutomationTask, createLead, createLeadActivity, getLeadByEmail, getWebhookSourceByHash, listEnabledFollowUpSequences, touchWebhookSource, updateLeadQualification } from "./db";
 
 type NormalizedLead = { name: string; email: string; company?: string; instagramHandle?: string; goal: string; consent: boolean };
 
@@ -85,7 +85,16 @@ export function registerWebhookRoutes(app: Express) {
       const leadId = await createLead({ name: input.name, email: input.email, company: input.company, instagramHandle: input.instagramHandle, source: source.source, goal: input.goal, consentAt: new Date(), stage: "new", score: 0 });
       await updateLeadQualification(leadId, qualification.stage, qualification.score);
       await createLeadActivity({ leadId, type: "webhook", title: `${input.name} entered from ${source.source}`, description: `${qualification.summary} · ${qualification.score}/100 intent score` });
-      await createAutomationTask({ leadId, type: "follow_up_email", status: "pending", sendAt: new Date(Date.now() + 5 * 60 * 1000), payload: JSON.stringify({ reason: qualification.stage === "qualified" ? "qualified_lead" : "new_lead", source: source.source }) });
+      const trigger = qualification.stage === "qualified" ? "qualified" : "new_lead";
+      const sequences = await listEnabledFollowUpSequences(source.ownerOpenId, trigger);
+      const steps = sequences.flatMap((sequence) => sequence.steps.map((step) => ({ ...step, sequenceName: sequence.name })));
+      if (steps.length) {
+        for (const step of steps) {
+          await createAutomationTask({ leadId, type: `${step.sequenceName}:${step.channel}`, status: "pending", sendAt: new Date(Date.now() + step.delayMinutes * 60 * 1000), payload: JSON.stringify({ sequenceName: step.sequenceName, subject: step.subject, body: step.body, channel: step.channel, source: source.source }) });
+        }
+      } else {
+        await createAutomationTask({ leadId, type: "follow_up_email", status: "pending", sendAt: new Date(Date.now() + 5 * 60 * 1000), payload: JSON.stringify({ reason: trigger, source: source.source }) });
+      }
       return res.status(201).json({ ok: true, leadId, stage: qualification.stage, score: qualification.score });
     } catch (error) {
       console.error("[Webhook] Lead intake failed", error);

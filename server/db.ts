@@ -1,6 +1,6 @@
-import { asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { activities, Activity, appointments, automationTasks, calendarConnections, chatMessages, chatSessions, ChatSession, InsertLead, InsertUser, leads, users, webhookSources } from "../drizzle/schema";
+import { activities, Activity, appointments, automationTasks, calendarConnections, chatMessages, chatSessions, ChatSession, followUpSequences, followUpSteps, InsertLead, InsertUser, leads, users, webhookSources } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -206,4 +206,49 @@ export async function listAutomationTasks(limit = 50) {
   const db = await getDb();
   if (!db) throw new Error("Database is not available");
   return db.select().from(automationTasks).orderBy(asc(automationTasks.sendAt)).limit(limit);
+}
+
+export async function listFollowUpSequences(ownerOpenId: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  return db.select().from(followUpSequences).where(eq(followUpSequences.ownerOpenId, ownerOpenId)).orderBy(desc(followUpSequences.updatedAt));
+}
+
+export async function getFollowUpSequence(sequenceId: number, ownerOpenId: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  const sequence = await db.select().from(followUpSequences).where(eq(followUpSequences.id, sequenceId)).limit(1);
+  if (!sequence[0] || sequence[0].ownerOpenId !== ownerOpenId) return undefined;
+  const steps = await db.select().from(followUpSteps).where(eq(followUpSteps.sequenceId, sequenceId)).orderBy(asc(followUpSteps.position));
+  return { ...sequence[0], steps };
+}
+
+export async function listEnabledFollowUpSequences(ownerOpenId: string, trigger: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  const sequences = await db.select().from(followUpSequences).where(eq(followUpSequences.ownerOpenId, ownerOpenId)).orderBy(asc(followUpSequences.id));
+  const enabled = sequences.filter((sequence) => sequence.enabled && sequence.trigger === trigger);
+  return Promise.all(enabled.map(async (sequence) => ({ ...sequence, steps: await db.select().from(followUpSteps).where(eq(followUpSteps.sequenceId, sequence.id)).orderBy(asc(followUpSteps.position)) })));
+}
+
+export async function createFollowUpSequence(input: typeof followUpSequences.$inferInsert) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  const result = await db.insert(followUpSequences).values(input);
+  return Number(result[0].insertId);
+}
+
+export async function createFollowUpStep(input: typeof followUpSteps.$inferInsert) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  const result = await db.insert(followUpSteps).values(input);
+  return Number(result[0].insertId);
+}
+
+export async function setFollowUpSequenceEnabled(sequenceId: number, ownerOpenId: string, enabled: boolean) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  await db.update(followUpSequences).set({ enabled, updatedAt: new Date() }).where(and(eq(followUpSequences.id, sequenceId), eq(followUpSequences.ownerOpenId, ownerOpenId)));
+  const sequence = await db.select().from(followUpSequences).where(and(eq(followUpSequences.id, sequenceId), eq(followUpSequences.ownerOpenId, ownerOpenId))).limit(1);
+  if (!sequence[0] || sequence[0].ownerOpenId !== ownerOpenId) throw new Error("Sequence not found");
 }

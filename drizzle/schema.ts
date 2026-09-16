@@ -105,6 +105,28 @@ export const automationTasks = mysqlTable("automationTasks", {
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
+export const followUpSequences = mysqlTable("followUpSequences", {
+  id: int("id").autoincrement().primaryKey(),
+  ownerOpenId: varchar("ownerOpenId", { length: 64 }).notNull(),
+  name: varchar("name", { length: 160 }).notNull(),
+  trigger: varchar("trigger", { length: 80 }).notNull().default("qualified"),
+  enabled: boolean("enabled").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export const followUpSteps = mysqlTable("followUpSteps", {
+  id: int("id").autoincrement().primaryKey(),
+  sequenceId: int("sequenceId").notNull(),
+  position: int("position").notNull(),
+  delayMinutes: int("delayMinutes").notNull().default(0),
+  channel: mysqlEnum("channel", ["email", "sms", "task"]).default("email").notNull(),
+  subject: varchar("subject", { length: 220 }),
+  body: text("body").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 export type Lead = typeof leads.$inferSelect;
@@ -117,3 +139,5 @@ export type CalendarConnection = typeof calendarConnections.$inferSelect;
 export type Appointment = typeof appointments.$inferSelect;
 export type WebhookSource = typeof webhookSources.$inferSelect;
 export type AutomationTask = typeof automationTasks.$inferSelect;
+export type FollowUpSequence = typeof followUpSequences.$inferSelect;
+export type FollowUpStep = typeof followUpSteps.$inferSelect;

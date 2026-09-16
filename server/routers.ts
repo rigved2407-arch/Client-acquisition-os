@@ -4,7 +4,7 @@ import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
-import { createChatMessage, createChatSession, createLead, createLeadActivity, createAppointment, getActivities, getCalendarConnection, getChatMessages, getChatSession, getLeadById, getLeads, updateChatSession, updateLeadQualification, updateLeadStage } from "./db";
+import { createChatMessage, createChatSession, createFollowUpSequence, createFollowUpStep, createLead, createLeadActivity, createAppointment, getActivities, getCalendarConnection, getChatMessages, getChatSession, getFollowUpSequence, getLeadById, getLeads, listFollowUpSequences, updateChatSession, updateLeadQualification, updateLeadStage, setFollowUpSequenceEnabled } from "./db";
 import { createGoogleEvent, getGoogleConnectUrl, listBusyEvents } from "./googleCalendar";
 import { ENV } from "./_core/env";
 import { createWebhookSource, listAutomationTasks, listWebhookSources } from "./db";
@@ -215,6 +215,16 @@ export const appRouter = router({
   automation: router({
     sources: protectedProcedure.query(({ ctx }) => listWebhookSources(ctx.user.openId)),
     tasks: protectedProcedure.query(() => listAutomationTasks()),
+    sequences: protectedProcedure.query(async ({ ctx }) => {
+      const items = await listFollowUpSequences(ctx.user.openId);
+      return Promise.all(items.map((item) => getFollowUpSequence(item.id, ctx.user.openId)));
+    }),
+    createSequence: protectedProcedure.input(z.object({ name: z.string().trim().min(2).max(160), trigger: z.enum(["new_lead", "qualified"]), steps: z.array(z.object({ delayMinutes: z.number().int().min(0).max(43200), channel: z.enum(["email", "sms", "task"]), subject: z.string().trim().max(220).optional(), body: z.string().trim().min(1).max(5000) })).min(1).max(12) })).mutation(async ({ ctx, input }) => {
+      const sequenceId = await createFollowUpSequence({ ownerOpenId: ctx.user.openId, name: input.name, trigger: input.trigger, enabled: true });
+      for (let index = 0; index < input.steps.length; index += 1) await createFollowUpStep({ sequenceId, position: index + 1, ...input.steps[index] });
+      return getFollowUpSequence(sequenceId, ctx.user.openId);
+    }),
+    toggleSequence: protectedProcedure.input(z.object({ sequenceId: z.number().int().positive(), enabled: z.boolean() })).mutation(({ ctx, input }) => setFollowUpSequenceEnabled(input.sequenceId, ctx.user.openId, input.enabled)),
     createSource: protectedProcedure.input(z.object({ name: z.string().trim().min(2).max(120), source: z.string().trim().min(2).max(80) })).mutation(async ({ ctx, input }) => {
       const token = createWebhookToken();
       const id = await createWebhookSource({ ownerOpenId: ctx.user.openId, name: input.name, source: input.source, tokenHash: tokenHash(token), enabled: true });

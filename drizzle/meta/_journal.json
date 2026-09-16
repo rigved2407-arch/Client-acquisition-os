@@ -36,6 +36,13 @@
       "when": 1789599109824,
       "tag": "0004_spooky_mephisto",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1789599670604,
+      "tag": "0005_bored_wraith",
+      "breakpoints": true
     }
   ]
 }
