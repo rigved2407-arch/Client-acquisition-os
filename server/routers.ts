@@ -3,10 +3,8 @@ import { invokeLLM } from "./_core/llm";
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
-import { publicProcedure, router } from "./_core/trpc";
-import { createLead, getActivities, getDb, getLeads } from "./db";
-import { activities, leads } from "../drizzle/schema";
-import { desc } from "drizzle-orm";
+import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
+import { createLead, createLeadActivity, getActivities, getLeadById, getLeads, updateLeadQualification } from "./db";
 
 const demoLeads = [
   { id: 101, name: "Avery Cole", email: "avery@coleadvisory.com", company: "Cole Advisory", source: "LinkedIn", goal: "Build a predictable client pipeline", stage: "qualified", score: 92, createdAt: new Date("2026-09-16T14:20:00Z"), lastActivityAt: new Date("2026-09-17T02:40:00Z") },
@@ -23,19 +21,53 @@ const demoActivities = [
   { id: 4, type: "won", title: "Sam Rivera became a client", description: "$4,500 offer · Workshop lead", createdAt: new Date("2026-09-16T09:20:00Z") },
 ];
 
-function statsFor(items: typeof demoLeads) {
+function statsFor(items: Array<{ stage: string }>) {
   const booked = items.filter((lead) => lead.stage === "booked").length;
   const qualified = items.filter((lead) => ["qualified", "booked", "won"].includes(lead.stage)).length;
   const won = items.filter((lead) => lead.stage === "won").length;
-  return {
-    totalLeads: items.length,
-    qualified,
-    booked,
-    won,
-    qualificationRate: items.length ? Math.round((qualified / items.length) * 100) : 0,
-    bookingRate: qualified ? Math.round((booked / qualified) * 100) : 0,
-    pipelineValue: won * 4500 + booked * 4500,
-  };
+  return { totalLeads: items.length, qualified, booked, won, qualificationRate: items.length ? Math.round((qualified / items.length) * 100) : 0, bookingRate: qualified ? Math.round((booked / qualified) * 100) : 0, pipelineValue: won * 4500 + booked * 4500 };
+}
+
+const leadInput = z.object({
+  name: z.string().trim().min(2).max(160),
+  email: z.string().trim().email().max(320),
+  company: z.string().trim().max(180).optional(),
+  goal: z.string().trim().min(10).max(2000),
+  source: z.string().trim().max(80).default("Website"),
+});
+
+async function qualifyWithAI(input: z.infer<typeof leadInput>) {
+  try {
+    const response = await invokeLLM({
+      messages: [
+        { role: "system", content: "You qualify inbound coaching prospects. Score fit and intent from 0 to 100. A qualified prospect has a clear business goal, urgency, and plausible readiness to invest. Use nurture for unclear or low-intent submissions. Never make promises. Return only JSON." },
+        { role: "user", content: `Name: ${input.name}\nCompany: ${input.company ?? "Not provided"}\nGoal: ${input.goal}` },
+      ],
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "inbound_lead_qualification",
+          strict: true,
+          schema: {
+            type: "object",
+            properties: {
+              score: { type: "integer", description: "Fit and intent score from 0 to 100" },
+              stage: { type: "string", enum: ["qualified", "nurture"] },
+              summary: { type: "string", description: "One sentence describing the fit" },
+              nextStep: { type: "string", description: "One practical next step for the coach" },
+            },
+            required: ["score", "stage", "summary", "nextStep"],
+            additionalProperties: false,
+          },
+        },
+      },
+    });
+    const content = response.choices?.[0]?.message?.content;
+    const parsed = JSON.parse(typeof content === "string" ? content : "{}");
+    return { score: Math.max(0, Math.min(100, Number(parsed.score) || 0)), stage: parsed.stage === "qualified" ? "qualified" as const : "nurture" as const, summary: String(parsed.summary || "Qualification completed."), nextStep: String(parsed.nextStep || "Review the lead and decide whether to invite them to a call.") };
+  } catch {
+    return { score: 50, stage: "nurture" as const, summary: "AI qualification was unavailable, so this lead has been safely placed in nurture for review.", nextStep: "Review this lead manually before sending an invitation." };
+  }
 }
 
 export const appRouter = router({
@@ -49,58 +81,22 @@ export const appRouter = router({
     }),
   }),
   growth: router({
-    overview: publicProcedure.query(async () => {
+    overview: protectedProcedure.query(async () => {
       const [liveLeads, liveActivities] = await Promise.all([getLeads(), getActivities()]);
       const usingDemo = liveLeads.length === 0;
       const items = usingDemo ? demoLeads : liveLeads;
       const activityItems = usingDemo ? demoActivities : liveActivities;
-      return { leads: items, activities: activityItems, stats: statsFor(items as typeof demoLeads), usingDemo };
+      return { leads: items, activities: activityItems, stats: statsFor(items), usingDemo };
     }),
-    createLead: publicProcedure.input(z.object({
-      name: z.string().min(2),
-      email: z.string().email(),
-      company: z.string().optional(),
-      source: z.string().default("Website"),
-      goal: z.string().optional(),
-    })).mutation(async ({ input }) => {
-      const id = await createLead({ ...input, stage: "new", score: 0 });
-      return { success: true, id };
+    createLead: publicProcedure.input(leadInput).mutation(async ({ input }) => {
+      const qualification = await qualifyWithAI(input);
+      const leadId = await createLead({ ...input, stage: "new", score: 0 });
+      await updateLeadQualification(leadId, qualification.stage, qualification.score);
+      await createLeadActivity({ leadId, type: "qualified", title: `${input.name} was qualified by AI`, description: `${qualification.summary} · ${qualification.score}/100 intent score` });
+      const lead = await getLeadById(leadId);
+      return { success: true, lead, qualification };
     }),
-    qualifyLead: publicProcedure.input(z.object({
-      transcript: z.string().min(10),
-    })).mutation(async ({ input }) => {
-      try {
-        const response = await invokeLLM({
-          messages: [
-            { role: "system", content: "You qualify coaching leads. Be concise, practical, and never make promises. Return only JSON." },
-            { role: "user", content: `Classify this prospect for a high-ticket coaching offer:\n\n${input.transcript}` },
-          ],
-          response_format: {
-            type: "json_schema",
-            json_schema: {
-              name: "lead_qualification",
-              strict: true,
-              schema: {
-                type: "object",
-                properties: {
-                  score: { type: "integer", description: "Intent and fit score from 0 to 100" },
-                  stage: { type: "string", enum: ["new", "qualified", "nurture"] },
-                  summary: { type: "string" },
-                  nextStep: { type: "string" },
-                },
-                required: ["score", "stage", "summary", "nextStep"],
-                additionalProperties: false,
-              },
-            },
-          },
-        });
-        const content = response.choices?.[0]?.message?.content;
-        const parsed = JSON.parse(typeof content === "string" ? content : "{}");
-        return { ...parsed, score: Math.max(0, Math.min(100, Number(parsed.score) || 0)) };
-      } catch {
-        return { score: 68, stage: "qualified", summary: "Good early fit based on stated urgency and clarity of goal.", nextStep: "Invite them to a short strategy call and confirm investment readiness." };
-      }
-    }),
+    qualifyLead: publicProcedure.input(z.object({ transcript: z.string().min(10) })).mutation(async ({ input }) => qualifyWithAI({ name: "Prospect", email: "prospect@example.com", goal: input.transcript, source: "Manual test" })),
   }),
 });
 

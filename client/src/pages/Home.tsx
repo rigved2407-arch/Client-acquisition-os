@@ -1,4 +1,6 @@
 import { trpc } from "@/lib/trpc";
+import { useAuth } from "@/_core/hooks/useAuth";
+import { startLogin } from "@/const";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -27,7 +29,8 @@ function relativeTime(value: string | Date) {
 }
 
 export default function Home() {
-  const { data, isLoading, refetch } = trpc.growth.overview.useQuery();
+  const { user, loading: authLoading } = useAuth();
+  const { data, isLoading, refetch } = trpc.growth.overview.useQuery(undefined, { enabled: !!user });
   const qualify = trpc.growth.qualifyLead.useMutation();
   const [query, setQuery] = useState("");
   const [showAdd, setShowAdd] = useState(false);
@@ -40,7 +43,9 @@ export default function Home() {
   const filteredLeads = useMemo(() => (data?.leads ?? []).filter((lead) => `${lead.name} ${lead.email} ${lead.company ?? ""}`.toLowerCase().includes(query.toLowerCase())), [data?.leads, query]);
   const stats = data?.stats;
 
-  if (isLoading) return <div className="min-h-screen bg-[#f7f8f4] flex items-center justify-center text-slate-500">Loading workspace…</div>;
+  if (authLoading || (user && isLoading)) return <div className="min-h-screen bg-[#f7f8f4] flex items-center justify-center text-slate-500">Loading workspace…</div>;
+
+  if (!user) return <div className="min-h-screen bg-[#f7f8f4] flex items-center justify-center px-5"><div className="w-full max-w-md rounded-3xl border border-[#dfe8d6] bg-[#fbfcf9] p-8 text-center shadow-[0_12px_40px_rgba(45,65,42,0.08)]"><div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-[#173b2d] text-[#d8f27f]"><Sparkles className="h-6 w-6" /></div><h1 className="mt-5 text-2xl font-semibold tracking-tight">CoachFlow workspace</h1><p className="mt-2 text-sm leading-relaxed text-[#718073]">Sign in to view your pipeline, lead activity, and qualification results.</p><Button onClick={() => startLogin()} className="mt-6 w-full rounded-xl bg-[#173b2d] text-[#eff7de] hover:bg-[#24533e]">Sign in to continue</Button></div></div>;
 
   return (
     <div className="min-h-screen bg-[#f7f8f4] text-[#172018]">

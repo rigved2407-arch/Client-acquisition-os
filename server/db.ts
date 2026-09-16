@@ -1,6 +1,6 @@
 import { desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { activities, InsertLead, InsertUser, leads, users } from "../drizzle/schema";
+import { activities, Activity, InsertLead, InsertUser, leads, users } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -53,13 +53,13 @@ export async function getUserByOpenId(openId: string) {
   return result[0];
 }
 
-export async function getLeads(limit = 20) {
+export async function getLeads(limit = 50) {
   const db = await getDb();
   if (!db) return [];
   return db.select().from(leads).orderBy(desc(leads.lastActivityAt)).limit(limit);
 }
 
-export async function getActivities(limit = 8) {
+export async function getActivities(limit = 20) {
   const db = await getDb();
   if (!db) return [];
   return db.select().from(activities).orderBy(desc(activities.createdAt)).limit(limit);
@@ -67,8 +67,29 @@ export async function getActivities(limit = 8) {
 
 export async function createLead(input: InsertLead) {
   const db = await getDb();
-  if (!db) return null;
+  if (!db) throw new Error("Database is not available");
   const result = await db.insert(leads).values(input);
-  const id = Number(result[0].insertId);
-  return id;
+  return Number(result[0].insertId);
 }
+
+export async function updateLeadQualification(leadId: number, stage: "new" | "qualified" | "nurture", score: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  await db.update(leads).set({ stage, score, lastActivityAt: new Date() }).where(eq(leads.id, leadId));
+}
+
+export async function createLeadActivity(input: { leadId: number; type: string; title: string; description: string }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  const result = await db.insert(activities).values(input);
+  return Number(result[0].insertId);
+}
+
+export async function getLeadById(leadId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(leads).where(eq(leads.id, leadId)).limit(1);
+  return result[0];
+}
+
+export type ActivityRecord = Activity;
