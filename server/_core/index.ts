@@ -7,6 +7,7 @@ import { registerOAuthRoutes } from "./oauth";
 import { registerStorageProxy } from "./storageProxy";
 import { registerGoogleCalendarRoutes } from "../googleCalendar";
 import { registerWebhookRoutes } from "../webhooks";
+import { registerDeliveryRoutes } from "../delivery";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
@@ -40,6 +41,7 @@ async function startServer() {
   registerOAuthRoutes(app);
   registerGoogleCalendarRoutes(app);
   registerWebhookRoutes(app);
+  registerDeliveryRoutes(app);
   // tRPC API
   app.use(
     "/api/trpc",

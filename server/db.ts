@@ -1,6 +1,6 @@
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, lte } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { activities, Activity, appointments, automationTasks, calendarConnections, chatMessages, chatSessions, ChatSession, followUpSequences, followUpSteps, InsertLead, InsertUser, leads, users, webhookSources } from "../drizzle/schema";
+import { activities, Activity, appointments, automationTasks, calendarConnections, chatMessages, chatSessions, ChatSession, deliverySettings, followUpSequences, followUpSteps, InsertLead, InsertUser, leads, users, webhookSources } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -206,6 +206,50 @@ export async function listAutomationTasks(limit = 50) {
   const db = await getDb();
   if (!db) throw new Error("Database is not available");
   return db.select().from(automationTasks).orderBy(asc(automationTasks.sendAt)).limit(limit);
+}
+
+export async function listDueAutomationTasks(limit = 20) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  return db.select({ task: automationTasks, lead: leads }).from(automationTasks).innerJoin(leads, eq(automationTasks.leadId, leads.id)).where(and(eq(automationTasks.status, "pending"), lte(automationTasks.sendAt, new Date()))).orderBy(asc(automationTasks.sendAt)).limit(limit);
+}
+
+export async function getDeliverySettings(ownerOpenId: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  const result = await db.select().from(deliverySettings).where(eq(deliverySettings.ownerOpenId, ownerOpenId)).limit(1);
+  return result[0] ?? { ownerOpenId, provider: "none" as const, fromEmail: null, enabled: false };
+}
+
+export async function saveDeliverySettings(input: typeof deliverySettings.$inferInsert) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  await db.insert(deliverySettings).values(input).onDuplicateKeyUpdate({ set: { provider: input.provider, fromEmail: input.fromEmail ?? null, enabled: input.enabled, updatedAt: new Date() } });
+  return getDeliverySettings(input.ownerOpenId);
+}
+
+export async function markAutomationTaskBlocked(taskId: number, reason: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  await db.update(automationTasks).set({ status: "blocked", lastError: reason, updatedAt: new Date() }).where(and(eq(automationTasks.id, taskId), eq(automationTasks.status, "pending")));
+}
+
+export async function markAutomationTaskAttempt(taskId: number, attempts: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  await db.update(automationTasks).set({ attempts, updatedAt: new Date() }).where(and(eq(automationTasks.id, taskId), eq(automationTasks.status, "pending")));
+}
+
+export async function markAutomationTaskSent(taskId: number, providerMessageId?: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  await db.update(automationTasks).set({ status: "sent", deliveredAt: new Date(), providerMessageId: providerMessageId ?? null, lastError: null, updatedAt: new Date() }).where(and(eq(automationTasks.id, taskId), eq(automationTasks.status, "pending")));
+}
+
+export async function markAutomationTaskFailed(taskId: number, reason: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  await db.update(automationTasks).set({ status: "failed", lastError: reason, updatedAt: new Date() }).where(and(eq(automationTasks.id, taskId), eq(automationTasks.status, "pending")));
 }
 
 export async function listFollowUpSequences(ownerOpenId: string) {

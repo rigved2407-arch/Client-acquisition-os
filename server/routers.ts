@@ -9,6 +9,8 @@ import { createGoogleEvent, getGoogleConnectUrl, listBusyEvents } from "./google
 import { ENV } from "./_core/env";
 import { createWebhookSource, listAutomationTasks, listWebhookSources } from "./db";
 import { createWebhookToken, tokenHash } from "./webhooks";
+import { getDeliverySettings, saveDeliverySettings } from "./db";
+import { processDueAutomationTasks } from "./delivery";
 
 const demoLeads = [
   { id: 101, name: "Avery Cole", email: "avery@coleadvisory.com", company: "Cole Advisory", source: "LinkedIn", goal: "Build a predictable client pipeline", stage: "qualified", score: 92, createdAt: new Date("2026-09-16T14:20:00Z"), lastActivityAt: new Date("2026-09-17T02:40:00Z") },
@@ -215,6 +217,9 @@ export const appRouter = router({
   automation: router({
     sources: protectedProcedure.query(({ ctx }) => listWebhookSources(ctx.user.openId)),
     tasks: protectedProcedure.query(() => listAutomationTasks()),
+    delivery: protectedProcedure.query(({ ctx }) => getDeliverySettings(ctx.user.openId)),
+    saveDelivery: protectedProcedure.input(z.object({ provider: z.enum(["none", "resend", "gmail"]), fromEmail: z.string().trim().email().max(320).optional(), enabled: z.boolean() })).mutation(({ ctx, input }) => saveDeliverySettings({ ownerOpenId: ctx.user.openId, provider: input.provider, fromEmail: input.fromEmail || null, enabled: input.enabled })),
+    processDue: protectedProcedure.mutation(({ ctx }) => processDueAutomationTasks(ctx.user.openId)),
     sequences: protectedProcedure.query(async ({ ctx }) => {
       const items = await listFollowUpSequences(ctx.user.openId);
       return Promise.all(items.map((item) => getFollowUpSequence(item.id, ctx.user.openId)));

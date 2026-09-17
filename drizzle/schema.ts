@@ -97,10 +97,23 @@ export const automationTasks = mysqlTable("automationTasks", {
   id: int("id").autoincrement().primaryKey(),
   leadId: int("leadId").notNull(),
   type: varchar("type", { length: 80 }).notNull(),
-  status: mysqlEnum("status", ["pending", "sent", "cancelled", "failed"]).default("pending").notNull(),
+  status: mysqlEnum("status", ["pending", "sent", "blocked", "cancelled", "failed"]).default("pending").notNull(),
   sendAt: timestamp("sendAt").notNull(),
   payload: text("payload"),
   attempts: int("attempts").default(0).notNull(),
+  lastError: text("lastError"),
+  deliveredAt: timestamp("deliveredAt"),
+  providerMessageId: varchar("providerMessageId", { length: 320 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export const deliverySettings = mysqlTable("deliverySettings", {
+  id: int("id").autoincrement().primaryKey(),
+  ownerOpenId: varchar("ownerOpenId", { length: 64 }).notNull().unique(),
+  provider: mysqlEnum("provider", ["none", "resend", "gmail"]).default("none").notNull(),
+  fromEmail: varchar("fromEmail", { length: 320 }),
+  enabled: boolean("enabled").default(false).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -139,5 +152,6 @@ export type CalendarConnection = typeof calendarConnections.$inferSelect;
 export type Appointment = typeof appointments.$inferSelect;
 export type WebhookSource = typeof webhookSources.$inferSelect;
 export type AutomationTask = typeof automationTasks.$inferSelect;
+export type DeliverySettings = typeof deliverySettings.$inferSelect;
 export type FollowUpSequence = typeof followUpSequences.$inferSelect;
 export type FollowUpStep = typeof followUpSteps.$inferSelect;
