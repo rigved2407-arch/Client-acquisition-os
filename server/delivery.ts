@@ -38,6 +38,11 @@ export async function processDueAutomationTasks(ownerOpenId = ENV.ownerOpenId): 
     const payload = parsePayload(item.task.payload);
     const channel = payload.channel || (item.task.type.endsWith(":email") ? "email" : item.task.type.endsWith(":sms") ? "sms" : "task");
     if (channel === "task") { summary.skipped += 1; continue; }
+    if (item.lead.automationPaused) {
+      await markAutomationTaskBlocked(item.task.id, "Delivery blocked: follow-up automation is paused for this lead.");
+      summary.blocked += 1;
+      continue;
+    }
     if (!item.lead.consentAt) {
       await markAutomationTaskBlocked(item.task.id, "Delivery blocked: lead consent is missing.");
       summary.blocked += 1;

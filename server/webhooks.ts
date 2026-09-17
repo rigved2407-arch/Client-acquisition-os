@@ -1,7 +1,8 @@
 import crypto from "node:crypto";
 import type { Express } from "express";
 import { invokeLLM } from "./_core/llm";
-import { createAutomationTask, createLead, createLeadActivity, getLeadByEmail, getWebhookSourceByHash, listEnabledFollowUpSequences, touchWebhookSource, updateLeadQualification } from "./db";
+import { createAutomationTask, createLead, createLeadActivity, getLeadByEmail, getWebhookSourceByHash, listEnabledFollowUpSequences, recordLeadReply, touchWebhookSource, updateLeadQualification } from "./db";
+import { ENV } from "./_core/env";
 
 type NormalizedLead = { name: string; email: string; company?: string; instagramHandle?: string; goal: string; consent: boolean };
 
@@ -71,7 +72,35 @@ export function tokenHash(token: string) {
   return hashToken(token);
 }
 
+export function normalizeReplyPayload(payload: unknown) {
+  const body = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>;
+  const nested = (body.data && typeof body.data === "object" ? body.data : body) as Record<string, unknown>;
+  const from = String(nested.from || nested.sender || nested.email || nested.replyTo || "");
+  const email = from.match(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/)?.[0]?.toLowerCase();
+  const message = String(nested.text || nested.body || nested.content || nested.message || "Inbound reply received").trim();
+  const channel = String(nested.channel || "email").toLowerCase() === "sms" ? "sms" as const : "email" as const;
+  if (!email) throw new Error("Reply payload must include a sender email");
+  return { email, message, channel };
+}
+
 export function registerWebhookRoutes(app: Express) {
+  app.post("/api/webhooks/replies", async (req, res) => {
+    try {
+      if (!ENV.replyWebhookSecret) return res.status(503).json({ error: "Reply webhook is not configured" });
+      const provided = String(req.header("x-coachflow-webhook-secret") || req.header("authorization") || "").replace(/^Bearer\s+/i, "");
+      const expected = Buffer.from(ENV.replyWebhookSecret);
+      const actual = Buffer.from(provided);
+      if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) return res.status(401).json({ error: "Invalid webhook signature" });
+      const { email, message, channel } = normalizeReplyPayload(req.body);
+      const lead = await getLeadByEmail(email);
+      if (!lead) return res.status(202).json({ ok: true, ignored: "sender_not_in_pipeline" });
+      await recordLeadReply(lead.id, message, channel);
+      return res.status(200).json({ ok: true, leadId: lead.id, automation: "paused" });
+    } catch (error) {
+      console.error("[Webhook] Reply processing failed", error);
+      return res.status(400).json({ error: error instanceof Error ? error.message : "Invalid reply payload" });
+    }
+  });
   app.post("/api/webhooks/:token", async (req, res) => {
     try {
       const source = await getWebhookSourceByHash(hashToken(req.params.token));
@@ -101,4 +130,6 @@ export function registerWebhookRoutes(app: Express) {
       return res.status(400).json({ error: error instanceof Error ? error.message : "Invalid form payload" });
     }
   });
+
+
 }

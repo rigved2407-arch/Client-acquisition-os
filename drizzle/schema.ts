@@ -23,6 +23,8 @@ export const leads = mysqlTable("leads", {
   consentAt: timestamp("consentAt"),
   stage: mysqlEnum("stage", ["new", "qualified", "booked", "won", "nurture"]).default("new").notNull(),
   score: int("score").default(0).notNull(),
+  replyAt: timestamp("replyAt"),
+  automationPaused: boolean("automationPaused").default(false).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   lastActivityAt: timestamp("lastActivityAt").defaultNow().notNull(),
 });

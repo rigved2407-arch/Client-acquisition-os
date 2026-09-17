@@ -84,6 +84,23 @@ export async function updateLeadStage(leadId: number, stage: "new" | "qualified"
   await db.update(leads).set({ stage, lastActivityAt: new Date() }).where(eq(leads.id, leadId));
 }
 
+export async function recordLeadReply(leadId: number, message: string, channel = "email") {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  const now = new Date();
+  await db.update(leads).set({ replyAt: now, automationPaused: true, lastActivityAt: now }).where(eq(leads.id, leadId));
+  await db.update(automationTasks).set({ status: "cancelled", lastError: `Cancelled after ${channel} reply.`, updatedAt: now }).where(and(eq(automationTasks.leadId, leadId), eq(automationTasks.status, "pending")));
+  await db.insert(activities).values({ leadId, type: "reply", title: `${channel === "sms" ? "SMS" : "Email"} reply received`, description: message.slice(0, 500) });
+}
+
+export async function pauseLeadAutomation(leadId: number, paused: boolean) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  await db.update(leads).set({ automationPaused: paused, lastActivityAt: new Date() }).where(eq(leads.id, leadId));
+  if (paused) await db.update(automationTasks).set({ status: "cancelled", lastError: "Cancelled by operator.", updatedAt: new Date() }).where(and(eq(automationTasks.leadId, leadId), eq(automationTasks.status, "pending")));
+  await db.insert(activities).values({ leadId, type: paused ? "automation_paused" : "automation_resumed", title: paused ? "Follow-up automation paused" : "Follow-up automation resumed", description: paused ? "Pending follow-ups were cancelled." : "New follow-ups may be scheduled." });
+}
+
 export async function createLeadActivity(input: { leadId: number; type: string; title: string; description: string }) {
   const db = await getDb();
   if (!db) throw new Error("Database is not available");

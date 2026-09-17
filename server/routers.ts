@@ -4,7 +4,7 @@ import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
-import { createChatMessage, createChatSession, createFollowUpSequence, createFollowUpStep, createLead, createLeadActivity, createAppointment, getActivities, getCalendarConnection, getChatMessages, getChatSession, getFollowUpSequence, getLeadById, getLeads, listFollowUpSequences, updateChatSession, updateLeadQualification, updateLeadStage, setFollowUpSequenceEnabled } from "./db";
+import { createChatMessage, createChatSession, createFollowUpSequence, createFollowUpStep, createLead, createLeadActivity, createAppointment, getActivities, getCalendarConnection, getChatMessages, getChatSession, getFollowUpSequence, getLeadById, getLeads, listFollowUpSequences, pauseLeadAutomation, updateChatSession, updateLeadQualification, updateLeadStage, setFollowUpSequenceEnabled } from "./db";
 import { createGoogleEvent, getGoogleConnectUrl, listBusyEvents } from "./googleCalendar";
 import { ENV } from "./_core/env";
 import { createWebhookSource, listAutomationTasks, listWebhookSources } from "./db";
@@ -210,6 +210,7 @@ export const appRouter = router({
       const event = await createGoogleEvent(ENV.ownerOpenId, { summary: `Strategy call with ${lead.name}`, description: `CoachFlow qualified lead.\nGoal: ${lead.goal || "Not provided"}\nSource: ${lead.source}`, startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString(), attendeeName: lead.name, attendeeEmail: lead.email });
       await createAppointment({ leadId: lead.id, ownerOpenId: ENV.ownerOpenId, provider: "google", providerEventId: event.id, startsAt, endsAt, inviteeName: lead.name, inviteeEmail: lead.email, status: "confirmed" });
       await updateLeadStage(lead.id, "booked");
+      await pauseLeadAutomation(lead.id, true);
       await createLeadActivity({ leadId: lead.id, type: "booked", title: `${lead.name} booked a strategy call`, description: `${startsAt.toLocaleString()} · Google Calendar` });
       return { success: true, eventId: event.id, htmlLink: event.htmlLink, hangoutLink: event.hangoutLink, startsAt: startsAt.toISOString() };
     }),
@@ -220,6 +221,7 @@ export const appRouter = router({
     delivery: protectedProcedure.query(({ ctx }) => getDeliverySettings(ctx.user.openId)),
     saveDelivery: protectedProcedure.input(z.object({ provider: z.enum(["none", "resend", "gmail"]), fromEmail: z.string().trim().email().max(320).optional(), enabled: z.boolean() })).mutation(({ ctx, input }) => saveDeliverySettings({ ownerOpenId: ctx.user.openId, provider: input.provider, fromEmail: input.fromEmail || null, enabled: input.enabled })),
     processDue: protectedProcedure.mutation(({ ctx }) => processDueAutomationTasks(ctx.user.openId)),
+    setLeadAutomation: protectedProcedure.input(z.object({ leadId: z.number().int().positive(), paused: z.boolean() })).mutation(({ input }) => pauseLeadAutomation(input.leadId, input.paused)),
     sequences: protectedProcedure.query(async ({ ctx }) => {
       const items = await listFollowUpSequences(ctx.user.openId);
       return Promise.all(items.map((item) => getFollowUpSequence(item.id, ctx.user.openId)));
