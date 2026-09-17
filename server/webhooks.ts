@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import type { Express } from "express";
 import { invokeLLM } from "./_core/llm";
-import { createAutomationTask, createLead, createLeadActivity, getLeadByEmail, getLeadByPhone, getWebhookSourceByHash, listEnabledFollowUpSequences, recordLeadReply, touchWebhookSource, unsubscribeLead, updateLeadQualification } from "./db";
+import { createAutomationTask, createLead, createLeadActivity, getLeadByEmail, getLeadByPhone, getWebhookSourceByHash, listEnabledFollowUpSequences, pauseLeadAutomation, recordLeadReply, touchWebhookSource, unsubscribeLead, updateLeadQualification } from "./db";
 import { ENV } from "./_core/env";
 
 type NormalizedLead = { name: string; email: string; phone?: string; company?: string; instagramHandle?: string; goal: string; consent: boolean; consentText?: string };
@@ -107,6 +107,35 @@ export function registerWebhookRoutes(app: Express) {
       return res.status(400).json({ error: error instanceof Error ? error.message : "Invalid reply payload" });
     }
   });
+  app.post("/api/webhooks/resend", async (req, res) => {
+    try {
+      const body = req.body as Record<string, unknown>;
+      const eventType = String(body.type || "");
+      const data = (body.data && typeof body.data === "object" ? body.data : {}) as Record<string, unknown>;
+      if (!["email.bounced", "email.complained", "email.opened", "email.clicked"].includes(eventType)) {
+        return res.status(200).json({ ok: true, ignored: eventType });
+      }
+      const email = String(data.email || data.to || "").toLowerCase();
+      if (!email) return res.status(200).json({ ok: true, ignored: "no_email" });
+      const lead = await getLeadByEmail(email);
+      if (!lead) return res.status(200).json({ ok: true, ignored: "lead_not_found" });
+      if (eventType === "email.bounced") {
+        await pauseLeadAutomation(lead.id, true);
+        await createLeadActivity({ leadId: lead.id, type: "email_bounced", title: "Email bounced", description: `Email ${email} bounced during delivery` });
+        return res.status(200).json({ ok: true, leadId: lead.id, action: "automation_paused" });
+      }
+      if (eventType === "email.complained") {
+        await unsubscribeLead(lead.id, "Email complaint received via Resend webhook");
+        return res.status(200).json({ ok: true, leadId: lead.id, action: "unsubscribed" });
+      }
+      await createLeadActivity({ leadId: lead.id, type: eventType === "email.opened" ? "email_opened" : "email_clicked", title: eventType === "email.opened" ? "Email opened" : "Email link clicked", description: `Resend webhook: ${eventType}` });
+      return res.status(200).json({ ok: true, leadId: lead.id, action: "activity_recorded" });
+    } catch (error) {
+      console.error("[Webhook] Resend processing failed", error);
+      return res.status(400).json({ error: error instanceof Error ? error.message : "Invalid Resend payload" });
+    }
+  });
+
   app.post("/api/webhooks/:token", async (req, res) => {
     try {
       const source = await getWebhookSourceByHash(hashToken(req.params.token));

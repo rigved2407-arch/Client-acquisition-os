@@ -4,7 +4,7 @@ import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
-import { createChatMessage, createChatSession, createFollowUpSequence, createFollowUpStep, createLead, createLeadActivity, createAppointment, getActivities, getCalendarConnection, getChatMessages, getChatSession, getFollowUpSequence, getLeadById, getLeads, getConversionAnalytics, listFollowUpSequences, pauseLeadAutomation, updateChatSession, updateLeadQualification, updateLeadStage, setFollowUpSequenceEnabled } from "./db";
+import { createChatMessage, createChatSession, createFollowUpSequence, createFollowUpStep, createLead, createLeadActivity, createAppointment, getActivities, getCalendarConnection, getChatMessages, getChatSession, getFollowUpSequence, getLeadById, getLeads, getConversionAnalytics, listFollowUpSequences, pauseLeadAutomation, updateChatSession, updateLeadQualification, updateLeadStage, setFollowUpSequenceEnabled, getLeadWithDetails, createLeadNote, deleteFollowUpSequence, deleteFollowUpStep, updateFollowUpSequence, updateFollowUpStep, toggleWebhookSource, deleteWebhookSource, cancelAppointmentById, getAppointmentsByLead, getChatSessionsList } from "./db";
 import { createGoogleEvent, getGoogleConnectUrl, listBusyEvents } from "./googleCalendar";
 import { ENV } from "./_core/env";
 import { createWebhookSource, listAutomationTasks, listWebhookSources } from "./db";
@@ -158,6 +158,32 @@ export const appRouter = router({
       return { leads: items, activities: activityItems, stats: statsFor(items), usingDemo };
     }),
     analytics: protectedProcedure.query(() => getConversionAnalytics()),
+    lead: protectedProcedure.input(z.object({ leadId: z.number().int().positive() })).query(async ({ input }) => {
+      const lead = await getLeadWithDetails(input.leadId);
+      if (!lead) throw new Error("Lead not found");
+      return lead;
+    }),
+    updateStage: protectedProcedure.input(z.object({ leadId: z.number().int().positive(), stage: z.enum(["new", "qualified", "booked", "won", "nurture"]) })).mutation(async ({ input }) => {
+      await updateLeadStage(input.leadId, input.stage);
+      return { success: true };
+    }),
+    addNote: protectedProcedure.input(z.object({ leadId: z.number().int().positive(), content: z.string().trim().min(1).max(2000) })).mutation(async ({ input }) => {
+      await createLeadNote(input.leadId, input.content);
+      return { success: true };
+    }),
+    markWon: protectedProcedure.input(z.object({ leadId: z.number().int().positive() })).mutation(async ({ input }) => {
+      await updateLeadStage(input.leadId, "won");
+      await pauseLeadAutomation(input.leadId, true);
+      await createLeadActivity({ leadId: input.leadId, type: "won", title: "Lead marked as won", description: "Manually marked as a won client" });
+      return { success: true };
+    }),
+    exportLeads: protectedProcedure.query(async () => {
+      const items = await getLeads(1000);
+      const csvHeader = "id,name,email,company,source,stage,score,createdAt\n";
+      const csvRows = items.map((lead) => `${lead.id},"${(lead.name || "").replace(/"/g, '""')}","${lead.email}","${(lead.company || "").replace(/"/g, '""')}","${lead.source}","${lead.stage}",${lead.score},${lead.createdAt.toISOString()}`).join("\n");
+      return { csv: csvHeader + csvRows, count: items.length };
+    }),
+    sessions: protectedProcedure.query(async () => getChatSessionsList()),
     createLead: publicProcedure.input(leadInput).mutation(async ({ input }) => {
       const qualification = await qualifyWithAI(input);
       const leadId = await createLead({ ...input, stage: "new", score: 0 });
@@ -222,6 +248,11 @@ export const appRouter = router({
       }
       return { connected: true, slots: slots.slice(0, 24) };
     }),
+    appointments: protectedProcedure.input(z.object({ leadId: z.number().int().positive() })).query(async ({ input }) => getAppointmentsByLead(input.leadId)),
+    cancel: protectedProcedure.input(z.object({ appointmentId: z.number().int().positive() })).mutation(async ({ input }) => {
+      await cancelAppointmentById(input.appointmentId);
+      return { success: true };
+    }),
     book: publicProcedure.input(z.object({ leadId: z.number().int().positive(), startsAt: z.string().datetime(), endsAt: z.string().datetime() })).mutation(async ({ input }) => {
       const lead = await getLeadById(input.leadId);
       if (!lead) throw new Error("Lead not found");
@@ -253,6 +284,30 @@ export const appRouter = router({
       return getFollowUpSequence(sequenceId, ctx.user.openId);
     }),
     toggleSequence: protectedProcedure.input(z.object({ sequenceId: z.number().int().positive(), enabled: z.boolean() })).mutation(({ ctx, input }) => setFollowUpSequenceEnabled(input.sequenceId, ctx.user.openId, input.enabled)),
+    deleteSequence: protectedProcedure.input(z.object({ sequenceId: z.number().int().positive() })).mutation(async ({ input }) => {
+      await deleteFollowUpSequence(input.sequenceId);
+      return { success: true };
+    }),
+    updateSequence: protectedProcedure.input(z.object({ sequenceId: z.number().int().positive(), name: z.string().trim().min(2).max(160).optional(), trigger: z.enum(["new_lead", "qualified"]).optional(), enabled: z.boolean().optional() })).mutation(async ({ input }) => {
+      await updateFollowUpSequence(input.sequenceId, { name: input.name, trigger: input.trigger, enabled: input.enabled });
+      return { success: true };
+    }),
+    deleteStep: protectedProcedure.input(z.object({ stepId: z.number().int().positive() })).mutation(async ({ input }) => {
+      await deleteFollowUpStep(input.stepId);
+      return { success: true };
+    }),
+    updateStep: protectedProcedure.input(z.object({ stepId: z.number().int().positive(), delayMinutes: z.number().int().min(0).max(43200).optional(), channel: z.enum(["email", "sms", "task"]).optional(), subject: z.string().trim().max(220).optional(), body: z.string().trim().min(1).max(5000).optional(), position: z.number().int().optional() })).mutation(async ({ input }) => {
+      await updateFollowUpStep(input.stepId, { delayMinutes: input.delayMinutes, channel: input.channel, subject: input.subject, body: input.body, position: input.position });
+      return { success: true };
+    }),
+    toggleSource: protectedProcedure.input(z.object({ sourceId: z.number().int().positive(), enabled: z.boolean() })).mutation(async ({ input }) => {
+      await toggleWebhookSource(input.sourceId, input.enabled);
+      return { success: true };
+    }),
+    deleteSource: protectedProcedure.input(z.object({ sourceId: z.number().int().positive() })).mutation(async ({ input }) => {
+      await deleteWebhookSource(input.sourceId);
+      return { success: true };
+    }),
     createSource: protectedProcedure.input(z.object({ name: z.string().trim().min(2).max(120), source: z.string().trim().min(2).max(80) })).mutation(async ({ ctx, input }) => {
       const token = createWebhookToken();
       const id = await createWebhookSource({ ownerOpenId: ctx.user.openId, name: input.name, source: input.source, tokenHash: tokenHash(token), enabled: true });

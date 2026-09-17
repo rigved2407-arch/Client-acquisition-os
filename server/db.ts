@@ -343,3 +343,76 @@ export async function setFollowUpSequenceEnabled(sequenceId: number, ownerOpenId
   const sequence = await db.select().from(followUpSequences).where(and(eq(followUpSequences.id, sequenceId), eq(followUpSequences.ownerOpenId, ownerOpenId))).limit(1);
   if (!sequence[0] || sequence[0].ownerOpenId !== ownerOpenId) throw new Error("Sequence not found");
 }
+
+export async function getLeadWithDetails(leadId: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const leadResult = await db.select().from(leads).where(eq(leads.id, leadId)).limit(1);
+  if (!leadResult[0]) return undefined;
+  const leadActivities = await db.select().from(activities).where(eq(activities.leadId, leadId)).orderBy(desc(activities.createdAt)).limit(50);
+  const leadAppointments = await db.select().from(appointments).where(eq(appointments.leadId, leadId)).orderBy(desc(appointments.startsAt));
+  return { ...leadResult[0], activities: leadActivities, appointments: leadAppointments };
+}
+
+export async function createLeadNote(leadId: number, content: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  const result = await db.insert(activities).values({ leadId, type: "note", title: "Manual note", description: content.slice(0, 2000) });
+  await db.update(leads).set({ lastActivityAt: new Date() }).where(eq(leads.id, leadId));
+  return Number(result[0].insertId);
+}
+
+export async function deleteFollowUpSequence(sequenceId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  await db.delete(followUpSteps).where(eq(followUpSteps.sequenceId, sequenceId));
+  await db.delete(followUpSequences).where(eq(followUpSequences.id, sequenceId));
+}
+
+export async function deleteFollowUpStep(stepId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  await db.delete(followUpSteps).where(eq(followUpSteps.id, stepId));
+}
+
+export async function updateFollowUpSequence(sequenceId: number, data: Partial<Pick<typeof followUpSequences.$inferInsert, "name" | "trigger" | "enabled">>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  await db.update(followUpSequences).set({ ...data, updatedAt: new Date() }).where(eq(followUpSequences.id, sequenceId));
+}
+
+export async function updateFollowUpStep(stepId: number, data: Partial<Pick<typeof followUpSteps.$inferInsert, "delayMinutes" | "channel" | "subject" | "body" | "position">>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  await db.update(followUpSteps).set({ ...data, updatedAt: new Date() }).where(eq(followUpSteps.id, stepId));
+}
+
+export async function toggleWebhookSource(sourceId: number, enabled: boolean) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  await db.update(webhookSources).set({ enabled }).where(eq(webhookSources.id, sourceId));
+}
+
+export async function deleteWebhookSource(sourceId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  await db.delete(webhookSources).where(eq(webhookSources.id, sourceId));
+}
+
+export async function cancelAppointmentById(appointmentId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  await db.update(appointments).set({ status: "cancelled" }).where(eq(appointments.id, appointmentId));
+}
+
+export async function getAppointmentsByLead(leadId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(appointments).where(eq(appointments.leadId, leadId)).orderBy(desc(appointments.startsAt));
+}
+
+export async function getChatSessionsList(limit = 50) {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(chatSessions).orderBy(desc(chatSessions.createdAt)).limit(limit);
+}

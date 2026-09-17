@@ -6,6 +6,8 @@ import Chat from "@/pages/Chat";
 import Calendar from "@/pages/Calendar";
 import Book from "@/pages/Book";
 import Automations from "@/pages/Automations";
+import LeadDetail from "@/pages/LeadDetail";
+import ChatHistory from "@/pages/ChatHistory";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
@@ -20,6 +22,8 @@ function Router() {
       <Route path="/calendar" component={Calendar} />
       <Route path="/book" component={Book} />
       <Route path="/automations" component={Automations} />
+      <Route path="/leads/:id" component={LeadDetail} />
+      <Route path="/chat-history" component={ChatHistory} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>

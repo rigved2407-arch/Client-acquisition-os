@@ -25,6 +25,12 @@ export default function Automations() {
   const create = trpc.automation.createSource.useMutation({ onSuccess: (result) => { setCreated(result); sources.refetch(); } });
   const createSequence = trpc.automation.createSequence.useMutation({ onSuccess: () => { sequences.refetch(); setSequenceName("Follow-up sequence"); } });
   const toggleSequence = trpc.automation.toggleSequence.useMutation({ onSuccess: () => sequences.refetch() });
+  const deleteSequence = trpc.automation.deleteSequence.useMutation({ onSuccess: () => sequences.refetch() });
+  const deleteStep = trpc.automation.deleteStep.useMutation({ onSuccess: () => sequences.refetch() });
+  const toggleSource = trpc.automation.toggleSource.useMutation({ onSuccess: () => sources.refetch() });
+  const deleteSource = trpc.automation.deleteSource.useMutation({ onSuccess: () => sources.refetch() });
+  const [editingSequence, setEditingSequence] = useState<number | null>(null);
+  const [editingStep, setEditingStep] = useState<number | null>(null);
   const [provider, setProvider] = useState<"none" | "resend" | "gmail" | "twilio">("none");
   const [fromEmail, setFromEmail] = useState("");
   const [deliveryEnabled, setDeliveryEnabled] = useState(false);
