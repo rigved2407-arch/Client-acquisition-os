@@ -28,10 +28,22 @@ const demoActivities = [
 ];
 
 function statsFor(items: Array<{ stage: string }>) {
+  const newLeads = items.filter((lead) => lead.stage === "new").length;
   const booked = items.filter((lead) => lead.stage === "booked").length;
   const qualified = items.filter((lead) => ["qualified", "booked", "won"].includes(lead.stage)).length;
   const won = items.filter((lead) => lead.stage === "won").length;
-  return { totalLeads: items.length, qualified, booked, won, qualificationRate: items.length ? Math.round((qualified / items.length) * 100) : 0, bookingRate: qualified ? Math.round((booked / qualified) * 100) : 0, pipelineValue: won * 4500 + booked * 4500 };
+  const nurture = items.filter((lead) => lead.stage === "nurture").length;
+  return {
+    totalLeads: items.length,
+    new: newLeads,
+    qualified,
+    booked,
+    won,
+    nurture,
+    qualificationRate: items.length ? Math.round((qualified / items.length) * 100) : 0,
+    bookingRate: qualified ? Math.round((booked / qualified) * 100) : 0,
+    pipelineValue: won * 4500 + booked * 4500,
+  };
 }
 
 const leadInput = z.object({
@@ -40,7 +52,7 @@ const leadInput = z.object({
   company: z.string().trim().max(180).optional(),
   goal: z.string().trim().min(10).max(2000),
   source: z.string().trim().max(80).default("Website"),
-});
+}).strict();
 
 const chatInput = z.object({
   sessionId: z.string().trim().min(8).max(64),

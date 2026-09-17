@@ -47,7 +47,9 @@ function verifyState(state: string) {
   const [payload, signature] = state.split(".");
   if (!payload || !signature) throw new Error("Invalid calendar OAuth state");
   const expected = crypto.createHmac("sha256", ENV.cookieSecret).update(payload).digest("base64url");
-  if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) throw new Error("Invalid calendar OAuth state");
+  const sigBuf = Buffer.from(signature);
+  const expBuf = Buffer.from(expected);
+  if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) throw new Error("Invalid calendar OAuth state");
   const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as { ownerOpenId: string };
   if (!parsed.ownerOpenId) throw new Error("Calendar OAuth owner missing");
   return parsed.ownerOpenId;
