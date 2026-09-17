@@ -59,6 +59,20 @@ export async function getLeads(limit = 50) {
   return db.select().from(leads).orderBy(desc(leads.lastActivityAt)).limit(limit);
 }
 
+export async function getConversionAnalytics() {
+  const items = await getLeads(1000);
+  const sourceMap = new Map<string, { source: string; leads: number; qualified: number; booked: number; won: number }>();
+  for (const lead of items) {
+    const row = sourceMap.get(lead.source) ?? { source: lead.source, leads: 0, qualified: 0, booked: 0, won: 0 };
+    row.leads += 1;
+    if (["qualified", "booked", "won"].includes(lead.stage)) row.qualified += 1;
+    if (["booked", "won"].includes(lead.stage)) row.booked += 1;
+    if (lead.stage === "won") row.won += 1;
+    sourceMap.set(lead.source, row);
+  }
+  return { total: items.length, qualified: items.filter((lead) => ["qualified", "booked", "won"].includes(lead.stage)).length, booked: items.filter((lead) => ["booked", "won"].includes(lead.stage)).length, won: items.filter((lead) => lead.stage === "won").length, replied: items.filter((lead) => Boolean(lead.replyAt)).length, unsubscribed: items.filter((lead) => Boolean(lead.unsubscribedAt)).length, bySource: Array.from(sourceMap.values()).sort((a, b) => b.leads - a.leads) };
+}
+
 export async function getActivities(limit = 20) {
   const db = await getDb();
   if (!db) return [];
@@ -91,6 +105,15 @@ export async function recordLeadReply(leadId: number, message: string, channel =
   await db.update(leads).set({ replyAt: now, automationPaused: true, lastActivityAt: now }).where(eq(leads.id, leadId));
   await db.update(automationTasks).set({ status: "cancelled", lastError: `Cancelled after ${channel} reply.`, updatedAt: now }).where(and(eq(automationTasks.leadId, leadId), eq(automationTasks.status, "pending")));
   await db.insert(activities).values({ leadId, type: "reply", title: `${channel === "sms" ? "SMS" : "Email"} reply received`, description: message.slice(0, 500) });
+}
+
+export async function unsubscribeLead(leadId: number, reason = "Lead requested no further contact.") {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  const now = new Date();
+  await db.update(leads).set({ unsubscribedAt: now, automationPaused: true, lastActivityAt: now }).where(eq(leads.id, leadId));
+  await db.update(automationTasks).set({ status: "cancelled", lastError: reason, updatedAt: now }).where(and(eq(automationTasks.leadId, leadId), eq(automationTasks.status, "pending")));
+  await db.insert(activities).values({ leadId, type: "unsubscribe", title: "Lead unsubscribed", description: reason });
 }
 
 export async function pauseLeadAutomation(leadId: number, paused: boolean) {
@@ -183,6 +206,13 @@ export async function getLeadByEmail(email: string) {
   const db = await getDb();
   if (!db) throw new Error("Database is not available");
   const result = await db.select().from(leads).where(eq(leads.email, email)).limit(1);
+  return result[0];
+}
+
+export async function getLeadByPhone(phone: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  const result = await db.select().from(leads).where(eq(leads.phone, phone)).limit(1);
   return result[0];
 }
 

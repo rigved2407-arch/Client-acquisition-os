@@ -1,0 +1,1 @@
+ALTER TABLE `deliverySettings` MODIFY COLUMN `provider` enum('none','resend','gmail','twilio') NOT NULL DEFAULT 'none';

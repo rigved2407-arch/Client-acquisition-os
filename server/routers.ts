@@ -4,7 +4,7 @@ import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
-import { createChatMessage, createChatSession, createFollowUpSequence, createFollowUpStep, createLead, createLeadActivity, createAppointment, getActivities, getCalendarConnection, getChatMessages, getChatSession, getFollowUpSequence, getLeadById, getLeads, listFollowUpSequences, pauseLeadAutomation, updateChatSession, updateLeadQualification, updateLeadStage, setFollowUpSequenceEnabled } from "./db";
+import { createChatMessage, createChatSession, createFollowUpSequence, createFollowUpStep, createLead, createLeadActivity, createAppointment, getActivities, getCalendarConnection, getChatMessages, getChatSession, getFollowUpSequence, getLeadById, getLeads, getConversionAnalytics, listFollowUpSequences, pauseLeadAutomation, updateChatSession, updateLeadQualification, updateLeadStage, setFollowUpSequenceEnabled } from "./db";
 import { createGoogleEvent, getGoogleConnectUrl, listBusyEvents } from "./googleCalendar";
 import { ENV } from "./_core/env";
 import { createWebhookSource, listAutomationTasks, listWebhookSources } from "./db";
@@ -129,6 +129,13 @@ export const appRouter = router({
       return { success: true } as const;
     }),
   }),
+  operations: router({
+    health: protectedProcedure.query(async ({ ctx }) => {
+      const delivery = await getDeliverySettings(ctx.user.openId);
+      const calendar = await getCalendarConnection(ENV.ownerOpenId);
+      return { deliveryProvider: delivery.provider, deliveryEnabled: delivery.enabled, replyWebhookConfigured: Boolean(ENV.replyWebhookSecret), resendConfigured: Boolean(ENV.resendApiKey), twilioConfigured: Boolean(ENV.twilioAccountSid && ENV.twilioAuthToken && ENV.twilioFromNumber), calendarConnected: Boolean(calendar), productionDomain: Boolean(process.env.PUBLIC_APP_URL) };
+    }),
+  }),
   growth: router({
     overview: protectedProcedure.query(async () => {
       const [liveLeads, liveActivities] = await Promise.all([getLeads(), getActivities()]);
@@ -137,6 +144,7 @@ export const appRouter = router({
       const activityItems = usingDemo ? demoActivities : liveActivities;
       return { leads: items, activities: activityItems, stats: statsFor(items), usingDemo };
     }),
+    analytics: protectedProcedure.query(() => getConversionAnalytics()),
     createLead: publicProcedure.input(leadInput).mutation(async ({ input }) => {
       const qualification = await qualifyWithAI(input);
       const leadId = await createLead({ ...input, stage: "new", score: 0 });
@@ -219,7 +227,7 @@ export const appRouter = router({
     sources: protectedProcedure.query(({ ctx }) => listWebhookSources(ctx.user.openId)),
     tasks: protectedProcedure.query(() => listAutomationTasks()),
     delivery: protectedProcedure.query(({ ctx }) => getDeliverySettings(ctx.user.openId)),
-    saveDelivery: protectedProcedure.input(z.object({ provider: z.enum(["none", "resend", "gmail"]), fromEmail: z.string().trim().email().max(320).optional(), enabled: z.boolean() })).mutation(({ ctx, input }) => saveDeliverySettings({ ownerOpenId: ctx.user.openId, provider: input.provider, fromEmail: input.fromEmail || null, enabled: input.enabled })),
+    saveDelivery: protectedProcedure.input(z.object({ provider: z.enum(["none", "resend", "gmail", "twilio"]), fromEmail: z.string().trim().email().max(320).optional(), enabled: z.boolean() })).mutation(({ ctx, input }) => saveDeliverySettings({ ownerOpenId: ctx.user.openId, provider: input.provider, fromEmail: input.fromEmail || null, enabled: input.enabled })),
     processDue: protectedProcedure.mutation(({ ctx }) => processDueAutomationTasks(ctx.user.openId)),
     setLeadAutomation: protectedProcedure.input(z.object({ leadId: z.number().int().positive(), paused: z.boolean() })).mutation(({ input }) => pauseLeadAutomation(input.leadId, input.paused)),
     sequences: protectedProcedure.query(async ({ ctx }) => {

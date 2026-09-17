@@ -1,10 +1,10 @@
 import crypto from "node:crypto";
 import type { Express } from "express";
 import { invokeLLM } from "./_core/llm";
-import { createAutomationTask, createLead, createLeadActivity, getLeadByEmail, getWebhookSourceByHash, listEnabledFollowUpSequences, recordLeadReply, touchWebhookSource, updateLeadQualification } from "./db";
+import { createAutomationTask, createLead, createLeadActivity, getLeadByEmail, getLeadByPhone, getWebhookSourceByHash, listEnabledFollowUpSequences, recordLeadReply, touchWebhookSource, unsubscribeLead, updateLeadQualification } from "./db";
 import { ENV } from "./_core/env";
 
-type NormalizedLead = { name: string; email: string; company?: string; instagramHandle?: string; goal: string; consent: boolean };
+type NormalizedLead = { name: string; email: string; phone?: string; company?: string; instagramHandle?: string; goal: string; consent: boolean; consentText?: string };
 
 function hashToken(token: string) {
   return crypto.createHash("sha256").update(token).digest("hex");
@@ -39,13 +39,14 @@ function valueFor(fields: Record<string, string>, candidates: string[]) {
 export function normalizeFormPayload(payload: unknown): NormalizedLead {
   const fields = flattenPayload(payload);
   const email = valueFor(fields, ["email", "e-mail"]);
+  const phone = valueFor(fields, ["phone", "mobile", "whatsapp", "telephone"]) || undefined;
   const name = valueFor(fields, ["full name", "your name", "name", "first name"]);
   const goal = valueFor(fields, ["goal", "challenge", "help", "what", "outcome", "fitness"]);
   const company = valueFor(fields, ["company", "business", "brand"]) || undefined;
   const instagramHandle = valueFor(fields, ["instagram", "ig handle", "social"]) || undefined;
   const consentValue = valueFor(fields, ["consent", "permission", "agree", "contact"]) || "";
   if (!email || !name || !goal) throw new Error("Form payload must include name, email, and goal fields");
-  return { name, email: email.toLowerCase(), company, instagramHandle, goal, consent: !consentValue || ["yes", "true", "1", "agree", "i agree"].some((value) => consentValue.toLowerCase().includes(value)) };
+  return { name, email: email.toLowerCase(), phone, company, instagramHandle, goal, consent: !consentValue || ["yes", "true", "1", "agree", "i agree"].some((value) => consentValue.toLowerCase().includes(value)), consentText: consentValue || undefined };
 }
 
 async function qualify(input: NormalizedLead) {
@@ -77,10 +78,11 @@ export function normalizeReplyPayload(payload: unknown) {
   const nested = (body.data && typeof body.data === "object" ? body.data : body) as Record<string, unknown>;
   const from = String(nested.from || nested.sender || nested.email || nested.replyTo || "");
   const email = from.match(/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}/)?.[0]?.toLowerCase();
+  const phone = String(nested.phone || (email ? "" : from)).replace(/[^+\d]/g, "");
   const message = String(nested.text || nested.body || nested.content || nested.message || "Inbound reply received").trim();
   const channel = String(nested.channel || "email").toLowerCase() === "sms" ? "sms" as const : "email" as const;
-  if (!email) throw new Error("Reply payload must include a sender email");
-  return { email, message, channel };
+  if (!email && phone.length < 7) throw new Error("Reply payload must include a sender email or phone number");
+  return { email, phone: phone || undefined, message, channel };
 }
 
 export function registerWebhookRoutes(app: Express) {
@@ -91,9 +93,13 @@ export function registerWebhookRoutes(app: Express) {
       const expected = Buffer.from(ENV.replyWebhookSecret);
       const actual = Buffer.from(provided);
       if (actual.length !== expected.length || !crypto.timingSafeEqual(actual, expected)) return res.status(401).json({ error: "Invalid webhook signature" });
-      const { email, message, channel } = normalizeReplyPayload(req.body);
-      const lead = await getLeadByEmail(email);
+      const { email, phone, message, channel } = normalizeReplyPayload(req.body);
+      const lead = email ? await getLeadByEmail(email) : phone ? await getLeadByPhone(phone) : undefined;
       if (!lead) return res.status(202).json({ ok: true, ignored: "sender_not_in_pipeline" });
+      if (/\b(stop|unsubscribe|remove me|do not contact|don't contact)\b/i.test(message)) {
+        await unsubscribeLead(lead.id, "Unsubscribe request received in inbound reply.");
+        return res.status(200).json({ ok: true, leadId: lead.id, automation: "stopped", unsubscribed: true });
+      }
       await recordLeadReply(lead.id, message, channel);
       return res.status(200).json({ ok: true, leadId: lead.id, automation: "paused" });
     } catch (error) {
@@ -111,7 +117,7 @@ export function registerWebhookRoutes(app: Express) {
       const existing = await getLeadByEmail(input.email);
       if (existing) return res.status(200).json({ ok: true, duplicate: true, leadId: existing.id });
       const qualification = await qualify(input);
-      const leadId = await createLead({ name: input.name, email: input.email, company: input.company, instagramHandle: input.instagramHandle, source: source.source, goal: input.goal, consentAt: new Date(), stage: "new", score: 0 });
+      const leadId = await createLead({ name: input.name, email: input.email, phone: input.phone, company: input.company, instagramHandle: input.instagramHandle, source: source.source, goal: input.goal, consentAt: new Date(), consentSource: source.source, consentText: input.consentText, stage: "new", score: 0 });
       await updateLeadQualification(leadId, qualification.stage, qualification.score);
       await createLeadActivity({ leadId, type: "webhook", title: `${input.name} entered from ${source.source}`, description: `${qualification.summary} · ${qualification.score}/100 intent score` });
       const trigger = qualification.stage === "qualified" ? "qualified" : "new_lead";

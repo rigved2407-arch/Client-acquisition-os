@@ -29,6 +29,15 @@ async function sendWithResend(input: { to: string; from: string; subject: string
   return result.id;
 }
 
+async function sendWithTwilio(input: { to: string; from: string; body: string }) {
+  if (!ENV.twilioAccountSid || !ENV.twilioAuthToken || !ENV.twilioFromNumber) throw new Error("Twilio is not configured: add TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_FROM_NUMBER.");
+  const auth = Buffer.from(`${ENV.twilioAccountSid}:${ENV.twilioAuthToken}`).toString("base64");
+  const response = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${ENV.twilioAccountSid}/Messages.json`, { method: "POST", headers: { authorization: `Basic ${auth}`, "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ To: input.to, From: input.from, Body: input.body }) });
+  if (!response.ok) throw new Error(`Twilio returned ${response.status}: ${(await response.text()).slice(0, 300)}`);
+  const result = await response.json() as { sid?: string };
+  return result.sid;
+}
+
 export async function processDueAutomationTasks(ownerOpenId = ENV.ownerOpenId): Promise<DeliverySummary> {
   const settings = await getDeliverySettings(ownerOpenId);
   const due = await listDueAutomationTasks();
@@ -38,6 +47,11 @@ export async function processDueAutomationTasks(ownerOpenId = ENV.ownerOpenId): 
     const payload = parsePayload(item.task.payload);
     const channel = payload.channel || (item.task.type.endsWith(":email") ? "email" : item.task.type.endsWith(":sms") ? "sms" : "task");
     if (channel === "task") { summary.skipped += 1; continue; }
+    if (item.lead.unsubscribedAt) {
+      await markAutomationTaskBlocked(item.task.id, "Delivery blocked: lead has unsubscribed.");
+      summary.blocked += 1;
+      continue;
+    }
     if (item.lead.automationPaused) {
       await markAutomationTaskBlocked(item.task.id, "Delivery blocked: follow-up automation is paused for this lead.");
       summary.blocked += 1;
@@ -53,8 +67,13 @@ export async function processDueAutomationTasks(ownerOpenId = ENV.ownerOpenId): 
       summary.blocked += 1;
       continue;
     }
-    if (settings.provider === "gmail" || channel === "sms") {
-      await markAutomationTaskBlocked(item.task.id, channel === "sms" ? "SMS delivery requires a configured SMS provider." : "Gmail delivery adapter is not enabled yet.");
+    if (settings.provider === "gmail" || (channel === "sms" && settings.provider !== "twilio")) {
+      await markAutomationTaskBlocked(item.task.id, channel === "sms" ? "SMS delivery requires Twilio to be configured." : "Gmail delivery adapter is not enabled yet.");
+      summary.blocked += 1;
+      continue;
+    }
+    if (channel === "sms" && !item.lead.phone) {
+      await markAutomationTaskBlocked(item.task.id, "Delivery blocked: lead has no phone number.");
       summary.blocked += 1;
       continue;
     }
@@ -63,7 +82,9 @@ export async function processDueAutomationTasks(ownerOpenId = ENV.ownerOpenId): 
     try {
       const body = renderTemplate(payload.body || "Thanks for your interest. A coach will be in touch shortly.", item.lead);
       const subject = renderTemplate(payload.subject || "Your next step", item.lead);
-      const providerId = await sendWithResend({ to: item.lead.email, from: settings.fromEmail || ENV.resendFromEmail || "onboarding@resend.dev", subject, text: body });
+      const providerId = channel === "sms"
+        ? await sendWithTwilio({ to: item.lead.phone!, from: ENV.twilioFromNumber, body })
+        : await sendWithResend({ to: item.lead.email, from: settings.fromEmail || ENV.resendFromEmail || "onboarding@resend.dev", subject, text: body });
       await markAutomationTaskSent(item.task.id, providerId);
       summary.sent += 1;
     } catch (error) {
