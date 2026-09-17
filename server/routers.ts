@@ -49,6 +49,7 @@ function statsFor(items: Array<{ stage: string }>) {
 const leadInput = z.object({
   name: z.string().trim().min(2).max(160),
   email: z.string().trim().email().max(320),
+  phone: z.string().trim().max(40).optional(),
   company: z.string().trim().max(180).optional(),
   goal: z.string().trim().min(10).max(2000),
   source: z.string().trim().max(80).default("Website"),

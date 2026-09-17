@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, lte } from "drizzle-orm";
+import { and, asc, desc, eq, gte, lte } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { activities, Activity, appointments, automationTasks, calendarConnections, chatMessages, chatSessions, ChatSession, deliverySettings, followUpSequences, followUpSteps, InsertLead, InsertUser, leads, users, webhookSources } from "../drizzle/schema";
 import { ENV } from "./_core/env";
