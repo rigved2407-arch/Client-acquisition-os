@@ -4,7 +4,7 @@ import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
-import { createChatMessage, createChatSession, createFollowUpSequence, createFollowUpStep, createLead, createLeadActivity, createAppointment, getActivities, getCalendarConnection, getChatMessages, getChatSession, getFollowUpSequence, getLeadById, getLeads, getConversionAnalytics, listFollowUpSequences, pauseLeadAutomation, updateChatSession, updateLeadQualification, updateLeadStage, setFollowUpSequenceEnabled, getLeadWithDetails, createLeadNote, deleteFollowUpSequence, deleteFollowUpStep, updateFollowUpSequence, updateFollowUpStep, toggleWebhookSource, deleteWebhookSource, cancelAppointmentById, getAppointmentsByLead, getChatSessionsList } from "./db";
+import { createChatMessage, createChatSession, createFollowUpSequence, createFollowUpStep, createLead, createLeadActivity, createAppointment, getActivities, getCalendarConnection, getChatMessages, getChatSession, getFollowUpSequence, getLeadById, getLeads, listFollowUpSequences, pauseLeadAutomation, updateChatSession, updateLeadQualification, updateLeadStage, setFollowUpSequenceEnabled, getLeadWithDetails, createLeadNote, deleteFollowUpSequence, deleteFollowUpStep, updateFollowUpSequence, updateFollowUpStep, toggleWebhookSource, deleteWebhookSource, cancelAppointmentById, getAppointmentsByLead, getChatSessionsList, getCoachSettings, saveCoachSettings } from "./db";
 import { createGoogleEvent, getGoogleConnectUrl, listBusyEvents } from "./googleCalendar";
 import { ENV } from "./_core/env";
 import { createWebhookSource, listAutomationTasks, listWebhookSources } from "./db";
@@ -27,7 +27,7 @@ const demoActivities = [
   { id: 4, type: "won", title: "Sam Rivera became a client", description: "$4,500 offer · Workshop lead", createdAt: new Date("2026-09-16T09:20:00Z") },
 ];
 
-function statsFor(items: Array<{ stage: string }>) {
+function statsFor(items: Array<{ stage: string }>, dealSize = 200) {
   const newLeads = items.filter((lead) => lead.stage === "new").length;
   const booked = items.filter((lead) => lead.stage === "booked").length;
   const qualified = items.filter((lead) => ["qualified", "booked", "won"].includes(lead.stage)).length;
@@ -42,7 +42,7 @@ function statsFor(items: Array<{ stage: string }>) {
     nurture,
     qualificationRate: items.length ? Math.round((qualified / items.length) * 100) : 0,
     bookingRate: qualified ? Math.round((booked / qualified) * 100) : 0,
-    pipelineValue: won * 4500 + booked * 4500,
+    pipelineValue: won * dealSize + booked * dealSize,
   };
 }
 
@@ -51,7 +51,7 @@ const leadInput = z.object({
   email: z.string().trim().email().max(320),
   phone: z.string().trim().max(40).optional(),
   company: z.string().trim().max(180).optional(),
-  goal: z.string().trim().min(10).max(2000),
+  goal: z.string().trim().min(5).max(2000),
   source: z.string().trim().max(80).default("Website"),
 }).strict();
 
@@ -64,8 +64,8 @@ async function qualifyWithAI(input: z.infer<typeof leadInput>) {
   try {
     const response = await invokeLLM({
       messages: [
-        { role: "system", content: "You qualify inbound coaching prospects. Score fit and intent from 0 to 100. A qualified prospect has a clear business goal, urgency, and plausible readiness to invest. Use nurture for unclear or low-intent submissions. Never make promises. Return only JSON." },
-        { role: "user", content: `Name: ${input.name}\nCompany: ${input.company ?? "Not provided"}\nGoal: ${input.goal}` },
+        { role: "system", content: "Qualify a fitness-coaching inbound lead. Score fit and intent from 0 to 100. Use qualified when the person has a specific transformation goal (weight loss, muscle gain, athletic performance, habit change), clear motivation, and a plausible near-term need. Use nurture when the submission is vague, low-intent, or lacks a concrete goal. Consider past attempts, timeline urgency, and readiness to invest. Never make promises. Return only JSON." },
+        { role: "user", content: `Name: ${input.name}\nCompany/Brand: ${input.company ?? "Not provided"}\nGoal: ${input.goal}\nSource: ${input.source}` },
       ],
       response_format: {
         type: "json_schema",
@@ -88,7 +88,7 @@ async function qualifyWithAI(input: z.infer<typeof leadInput>) {
     });
     const content = response.choices?.[0]?.message?.content;
     const parsed = JSON.parse(typeof content === "string" ? content : "{}");
-    return { score: Math.max(0, Math.min(100, Number(parsed.score) || 0)), stage: parsed.stage === "qualified" ? "qualified" as const : "nurture" as const, summary: String(parsed.summary || "Qualification completed."), nextStep: String(parsed.nextStep || "Review the lead and decide whether to invite them to a call.") };
+    return { score: Math.max(0, Math.min(100, Number(parsed.score) || 0)), stage: parsed.stage === "qualified" ? "qualified" as const : "nurture" as const, summary: String(parsed.summary || "Qualification completed."), nextStep: String(parsed.nextStep || "Review the lead and decide whether to invite them to a discovery call.") };
   } catch {
     return { score: 50, stage: "nurture" as const, summary: "AI qualification was unavailable, so this lead has been safely placed in nurture for review.", nextStep: "Review this lead manually before sending an invitation." };
   }
@@ -98,7 +98,7 @@ async function replyWithAI(input: { message: string; history: Array<{ role: "use
   try {
     const response = await invokeLLM({
       messages: [
-        { role: "system", content: "You are CoachFlow, a warm and concise AI concierge for a coaching business. Understand a prospect's goal and collect their name, work email, company or brand, and desired outcome. Ask only one short question at a time. Do not pressure, diagnose, or promise results. Once you have name, valid email, and a clear goal, thank them and say a coach will review their answers. Return only JSON." },
+        { role: "system", content: "You are CoachFlow, a warm and concise AI concierge for a fitness coaching business. Understand a prospect's fitness transformation goal (weight loss, muscle gain, athletic performance, energy, habit change) and collect their name, email, brand/studio name, and specific outcome. Ask only one short question at a time. Do not pressure, diagnose medical conditions, or promise results. Once you have name, valid email, and a clear transformation goal, thank them and say a coach will review their answers. Return only JSON." },
         { role: "user", content: `Known profile: ${JSON.stringify(input.profile)}\nConversation:\n${input.history.map((item) => `${item.role}: ${item.content}`).join("\n")}\nNew message: ${input.message}` },
       ],
       response_format: {
@@ -145,21 +145,33 @@ export const appRouter = router({
   operations: router({
     health: protectedProcedure.query(async ({ ctx }) => {
       const delivery = await getDeliverySettings(ctx.user.openId);
-      const calendar = await getCalendarConnection(ENV.ownerOpenId);
+      const calendar = await getCalendarConnection(ctx.user.openId);
       return { deliveryProvider: delivery.provider, deliveryEnabled: delivery.enabled, replyWebhookConfigured: Boolean(ENV.replyWebhookSecret), resendConfigured: Boolean(ENV.resendApiKey), twilioConfigured: Boolean(ENV.twilioAccountSid && ENV.twilioAuthToken && ENV.twilioFromNumber), calendarConnected: Boolean(calendar), productionDomain: Boolean(process.env.PUBLIC_APP_URL) };
     }),
   }),
   growth: router({
-    overview: protectedProcedure.query(async () => {
-      const [liveLeads, liveActivities] = await Promise.all([getLeads(), getActivities()]);
+    overview: protectedProcedure.query(async ({ ctx }) => {
+      const [liveLeads, liveActivities, settings] = await Promise.all([getLeads(ctx.user.openId), getActivities(ctx.user.openId), getCoachSettings(ctx.user.openId)]);
       const usingDemo = liveLeads.length === 0;
       const items = usingDemo ? demoLeads : liveLeads;
       const activityItems = usingDemo ? demoActivities : liveActivities;
-      return { leads: items, activities: activityItems, stats: statsFor(items), usingDemo };
+      return { leads: items, activities: activityItems, stats: statsFor(items, settings.averageDealSize), usingDemo };
     }),
-    analytics: protectedProcedure.query(() => getConversionAnalytics()),
-    lead: protectedProcedure.input(z.object({ leadId: z.number().int().positive() })).query(async ({ input }) => {
-      const lead = await getLeadWithDetails(input.leadId);
+    analytics: protectedProcedure.query(async ({ ctx }) => {
+      const [settings, allLeads] = await Promise.all([getCoachSettings(ctx.user.openId), getLeads(ctx.user.openId, 1000)]);
+      const items = allLeads;
+      const qualified = items.filter((lead) => ["qualified", "booked", "won"].includes(lead.stage)).length;
+      const booked = items.filter((lead) => ["booked", "won"].includes(lead.stage)).length;
+      const won = items.filter((lead) => lead.stage === "won").length;
+      const replied = items.filter((lead) => lead.replyAt).length;
+      const unsubscribed = items.filter((lead) => lead.unsubscribedAt).length;
+      const sourceMap = new Map<string, number>();
+      for (const lead of items) sourceMap.set(lead.source, (sourceMap.get(lead.source) || 0) + 1);
+      const bySource = Array.from(sourceMap.entries()).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([source, count]) => ({ source, count }));
+      return { total: items.length, qualified, booked, won, replied, unsubscribed, bySource, conversionRate: items.length ? Math.round((won / items.length) * 100) : 0, averageDealSize: settings.averageDealSize };
+    }),
+    lead: protectedProcedure.input(z.object({ leadId: z.number().int().positive() })).query(async ({ ctx, input }) => {
+      const lead = await getLeadWithDetails(input.leadId, ctx.user.openId);
       if (!lead) throw new Error("Lead not found");
       return lead;
     }),
@@ -167,28 +179,28 @@ export const appRouter = router({
       await updateLeadStage(input.leadId, input.stage);
       return { success: true };
     }),
-    addNote: protectedProcedure.input(z.object({ leadId: z.number().int().positive(), content: z.string().trim().min(1).max(2000) })).mutation(async ({ input }) => {
-      await createLeadNote(input.leadId, input.content);
+    addNote: protectedProcedure.input(z.object({ leadId: z.number().int().positive(), content: z.string().trim().min(1).max(2000) })).mutation(async ({ ctx, input }) => {
+      await createLeadNote(input.leadId, ctx.user.openId, input.content);
       return { success: true };
     }),
-    markWon: protectedProcedure.input(z.object({ leadId: z.number().int().positive() })).mutation(async ({ input }) => {
+    markWon: protectedProcedure.input(z.object({ leadId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
       await updateLeadStage(input.leadId, "won");
       await pauseLeadAutomation(input.leadId, true);
-      await createLeadActivity({ leadId: input.leadId, type: "won", title: "Lead marked as won", description: "Manually marked as a won client" });
+      await createLeadActivity({ ownerOpenId: ctx.user.openId, leadId: input.leadId, type: "won", title: "Lead marked as won", description: "Manually marked as a won client" });
       return { success: true };
     }),
-    exportLeads: protectedProcedure.query(async () => {
-      const items = await getLeads(1000);
+    exportLeads: protectedProcedure.query(async ({ ctx }) => {
+      const items = await getLeads(ctx.user.openId, 1000);
       const csvHeader = "id,name,email,company,source,stage,score,createdAt\n";
       const csvRows = items.map((lead) => `${lead.id},"${(lead.name || "").replace(/"/g, '""')}","${lead.email}","${(lead.company || "").replace(/"/g, '""')}","${lead.source}","${lead.stage}",${lead.score},${lead.createdAt.toISOString()}`).join("\n");
       return { csv: csvHeader + csvRows, count: items.length };
     }),
-    sessions: protectedProcedure.query(async () => getChatSessionsList()),
+    sessions: protectedProcedure.query(async ({ ctx }) => getChatSessionsList(ctx.user.openId)),
     createLead: publicProcedure.input(leadInput).mutation(async ({ input }) => {
       const qualification = await qualifyWithAI(input);
-      const leadId = await createLead({ ...input, stage: "new", score: 0 });
+      const leadId = await createLead({ ...input, ownerOpenId: ENV.ownerOpenId, stage: "new", score: 0 });
       await updateLeadQualification(leadId, qualification.stage, qualification.score);
-      await createLeadActivity({ leadId, type: "qualified", title: `${input.name} was qualified by AI`, description: `${qualification.summary} · ${qualification.score}/100 intent score` });
+      await createLeadActivity({ ownerOpenId: ENV.ownerOpenId, leadId, type: "qualified", title: `${input.name} was qualified by AI`, description: `${qualification.summary} · ${qualification.score}/100 intent score` });
       const lead = await getLeadById(leadId);
       return { success: true, lead, qualification };
     }),
@@ -196,7 +208,7 @@ export const appRouter = router({
     chat: publicProcedure.input(chatInput).mutation(async ({ input }) => {
       let session = await getChatSession(input.sessionId);
       if (!session) {
-        await createChatSession(input.sessionId);
+        await createChatSession(input.sessionId, ENV.ownerOpenId);
         session = await getChatSession(input.sessionId);
       }
       if (!session) throw new Error("Could not start chat session");
@@ -209,9 +221,9 @@ export const appRouter = router({
 
       let lead = session.leadId ? await getLeadById(session.leadId) : undefined;
       if (!lead && result.ready && nextProfile.name && nextProfile.email && nextProfile.goal) {
-        const leadId = await createLead({ name: nextProfile.name, email: nextProfile.email, company: nextProfile.company || undefined, source: "AI concierge", goal: nextProfile.goal, stage: "new", score: 0 });
+        const leadId = await createLead({ name: nextProfile.name, email: nextProfile.email, company: nextProfile.company || undefined, source: "AI concierge", goal: nextProfile.goal, ownerOpenId: ENV.ownerOpenId, stage: "new", score: 0 });
         await updateLeadQualification(leadId, "qualified", result.score);
-        await createLeadActivity({ leadId, type: "qualified", title: `${nextProfile.name} was qualified by AI concierge`, description: `Conversation captured · ${result.score}/100 intent score` });
+        await createLeadActivity({ ownerOpenId: ENV.ownerOpenId, leadId, type: "qualified", title: `${nextProfile.name} was qualified by AI concierge`, description: `Conversation captured · ${result.score}/100 intent score` });
         await updateChatSession(input.sessionId, { leadId });
         lead = await getLeadById(leadId);
       }
@@ -226,17 +238,21 @@ export const appRouter = router({
       const ownerOpenId = ENV.ownerOpenId;
       const connection = await getCalendarConnection(ownerOpenId);
       if (!connection) return { connected: false, slots: [] };
+      const settings = await getCoachSettings(ownerOpenId);
       const from = input.from ? new Date(input.from) : new Date(Date.now() + 60 * 60 * 1000);
       const to = new Date(from.getTime() + 14 * 24 * 60 * 60 * 1000);
       const busy = await listBusyEvents(ownerOpenId, from.toISOString(), to.toISOString());
+      const allowedDays = settings.calendarDaysOfWeek.split(",").map(Number);
+      const startHour = settings.calendarStartHour;
+      const endHour = settings.calendarEndHour;
       const slots: Array<{ startsAt: string; endsAt: string; label: string }> = [];
       const cursor = new Date(from);
       cursor.setUTCMinutes(Math.ceil(cursor.getUTCMinutes() / 30) * 30, 0, 0);
       for (let day = 0; day < 14; day++) {
         const date = new Date(cursor);
         date.setUTCDate(cursor.getUTCDate() + day);
-        if ([0, 6].includes(date.getUTCDay())) continue;
-        for (let hour = 9; hour < 17; hour++) {
+        if (!allowedDays.includes(date.getUTCDay())) continue;
+        for (let hour = startHour; hour < endHour; hour++) {
           for (const minute of [0, 30]) {
             const startsAt = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), hour, minute));
             const endsAt = new Date(startsAt.getTime() + 30 * 60 * 1000);
@@ -263,7 +279,7 @@ export const appRouter = router({
       await createAppointment({ leadId: lead.id, ownerOpenId: ENV.ownerOpenId, provider: "google", providerEventId: event.id, startsAt, endsAt, inviteeName: lead.name, inviteeEmail: lead.email, status: "confirmed" });
       await updateLeadStage(lead.id, "booked");
       await pauseLeadAutomation(lead.id, true);
-      await createLeadActivity({ leadId: lead.id, type: "booked", title: `${lead.name} booked a strategy call`, description: `${startsAt.toLocaleString()} · Google Calendar` });
+      await createLeadActivity({ ownerOpenId: ENV.ownerOpenId, leadId: lead.id, type: "booked", title: `${lead.name} booked a strategy call`, description: `${startsAt.toLocaleString()} · Google Calendar` });
       return { success: true, eventId: event.id, htmlLink: event.htmlLink, hangoutLink: event.hangoutLink, startsAt: startsAt.toISOString() };
     }),
   }),
@@ -312,6 +328,11 @@ export const appRouter = router({
       const token = createWebhookToken();
       const id = await createWebhookSource({ ownerOpenId: ctx.user.openId, name: input.name, source: input.source, tokenHash: tokenHash(token), enabled: true });
       return { id, token, path: `/api/webhooks/${token}` };
+    }),
+    coachSettings: protectedProcedure.query(({ ctx }) => getCoachSettings(ctx.user.openId)),
+    saveCoachSettings: protectedProcedure.input(z.object({ averageDealSize: z.number().int().min(10).max(100000).optional(), calendarStartHour: z.number().int().min(0).max(23).optional(), calendarEndHour: z.number().int().min(1).max(24).optional(), calendarDaysOfWeek: z.string().max(20).optional() })).mutation(async ({ ctx, input }) => {
+      const updated = await saveCoachSettings({ ownerOpenId: ctx.user.openId, ...input });
+      return updated;
     }),
   }),
 });

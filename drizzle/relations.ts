@@ -12,6 +12,7 @@ import {
   deliverySettings,
   followUpSequences,
   followUpSteps,
+  coachSettings,
 } from "./schema";
 
 export const leadRelations = relations(leads, ({ many }) => ({
@@ -94,5 +95,12 @@ export const followUpStepRelations = relations(followUpSteps, ({ one }) => ({
   sequence: one(followUpSequences, {
     fields: [followUpSteps.sequenceId],
     references: [followUpSequences.id],
+  }),
+}));
+
+export const coachSettingsRelations = relations(coachSettings, ({ one }) => ({
+  owner: one(users, {
+    fields: [coachSettings.ownerOpenId],
+    references: [users.openId],
   }),
 }));

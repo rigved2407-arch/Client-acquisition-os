@@ -7,7 +7,7 @@ import { ArrowRight, CheckCircle2, ShieldCheck, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { Link } from "wouter";
 
-const welcomeMessage: Message = { role: "assistant", content: "Hi — I’m the CoachFlow concierge. I can learn a little about your coaching business and help point you toward the most useful next step. What would you like to improve first?" };
+const welcomeMessage: Message = { role: "assistant", content: "Hi — I’m the CoachFlow concierge. I can learn a little about your fitness goals and help point you toward the most useful next step. What are you looking to achieve?" };
 
 export default function Chat() {
   const [sessionId] = useState(() => `chat_${crypto.randomUUID().replaceAll("-", "")}`);

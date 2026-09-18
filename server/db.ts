@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, gte, lte } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { activities, Activity, appointments, automationTasks, calendarConnections, chatMessages, chatSessions, ChatSession, deliverySettings, followUpSequences, followUpSteps, InsertLead, InsertUser, leads, users, webhookSources } from "../drizzle/schema";
+import { activities, Activity, appointments, automationTasks, calendarConnections, chatMessages, chatSessions, ChatSession, coachSettings, CoachSettings, deliverySettings, followUpSequences, followUpSteps, InsertLead, InsertUser, leads, users, webhookSources } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -53,14 +53,14 @@ export async function getUserByOpenId(openId: string) {
   return result[0];
 }
 
-export async function getLeads(limit = 50) {
+export async function getLeads(ownerOpenId: string, limit = 50) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(leads).orderBy(desc(leads.lastActivityAt)).limit(limit);
+  return db.select().from(leads).where(eq(leads.ownerOpenId, ownerOpenId)).orderBy(desc(leads.lastActivityAt)).limit(limit);
 }
 
-export async function getConversionAnalytics() {
-  const items = await getLeads(1000);
+export async function getConversionAnalytics(ownerOpenId: string) {
+  const items = await getLeads(ownerOpenId, 1000);
   const sourceMap = new Map<string, { source: string; leads: number; qualified: number; booked: number; won: number }>();
   for (const lead of items) {
     const row = sourceMap.get(lead.source) ?? { source: lead.source, leads: 0, qualified: 0, booked: 0, won: 0 };
@@ -73,15 +73,16 @@ export async function getConversionAnalytics() {
   return { total: items.length, qualified: items.filter((lead) => ["qualified", "booked", "won"].includes(lead.stage)).length, booked: items.filter((lead) => ["booked", "won"].includes(lead.stage)).length, won: items.filter((lead) => lead.stage === "won").length, replied: items.filter((lead) => Boolean(lead.replyAt)).length, unsubscribed: items.filter((lead) => Boolean(lead.unsubscribedAt)).length, bySource: Array.from(sourceMap.values()).sort((a, b) => b.leads - a.leads) };
 }
 
-export async function getActivities(limit = 20) {
+export async function getActivities(ownerOpenId: string, limit = 20) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(activities).orderBy(desc(activities.createdAt)).limit(limit);
+  return db.select().from(activities).where(eq(activities.ownerOpenId, ownerOpenId)).orderBy(desc(activities.createdAt)).limit(limit);
 }
 
 export async function createLead(input: InsertLead) {
   const db = await getDb();
   if (!db) throw new Error("Database is not available");
+  if (!input.ownerOpenId) throw new Error("ownerOpenId is required");
   const result = await db.insert(leads).values(input);
   return Number(result[0].insertId);
 }
@@ -102,39 +103,46 @@ export async function recordLeadReply(leadId: number, message: string, channel =
   const db = await getDb();
   if (!db) throw new Error("Database is not available");
   const now = new Date();
+  const lead = await db.select().from(leads).where(eq(leads.id, leadId)).limit(1);
+  const ownerOpenId = lead[0]?.ownerOpenId ?? "unknown";
   await db.update(leads).set({ replyAt: now, automationPaused: true, lastActivityAt: now }).where(eq(leads.id, leadId));
   await db.update(automationTasks).set({ status: "cancelled", lastError: `Cancelled after ${channel} reply.`, updatedAt: now }).where(and(eq(automationTasks.leadId, leadId), eq(automationTasks.status, "pending")));
-  await db.insert(activities).values({ leadId, type: "reply", title: `${channel === "sms" ? "SMS" : "Email"} reply received`, description: message.slice(0, 500) });
+  await db.insert(activities).values({ ownerOpenId, leadId, type: "reply", title: `${channel === "sms" ? "SMS" : "Email"} reply received`, description: message.slice(0, 500) });
 }
 
 export async function unsubscribeLead(leadId: number, reason = "Lead requested no further contact.") {
   const db = await getDb();
   if (!db) throw new Error("Database is not available");
   const now = new Date();
+  const lead = await db.select().from(leads).where(eq(leads.id, leadId)).limit(1);
+  const ownerOpenId = lead[0]?.ownerOpenId ?? "unknown";
   await db.update(leads).set({ unsubscribedAt: now, automationPaused: true, lastActivityAt: now }).where(eq(leads.id, leadId));
   await db.update(automationTasks).set({ status: "cancelled", lastError: reason, updatedAt: now }).where(and(eq(automationTasks.leadId, leadId), eq(automationTasks.status, "pending")));
-  await db.insert(activities).values({ leadId, type: "unsubscribe", title: "Lead unsubscribed", description: reason });
+  await db.insert(activities).values({ ownerOpenId, leadId, type: "unsubscribe", title: "Lead unsubscribed", description: reason });
 }
 
 export async function pauseLeadAutomation(leadId: number, paused: boolean) {
   const db = await getDb();
   if (!db) throw new Error("Database is not available");
+  const lead = await db.select().from(leads).where(eq(leads.id, leadId)).limit(1);
+  const ownerOpenId = lead[0]?.ownerOpenId ?? "unknown";
   await db.update(leads).set({ automationPaused: paused, lastActivityAt: new Date() }).where(eq(leads.id, leadId));
   if (paused) await db.update(automationTasks).set({ status: "cancelled", lastError: "Cancelled by operator.", updatedAt: new Date() }).where(and(eq(automationTasks.leadId, leadId), eq(automationTasks.status, "pending")));
-  await db.insert(activities).values({ leadId, type: paused ? "automation_paused" : "automation_resumed", title: paused ? "Follow-up automation paused" : "Follow-up automation resumed", description: paused ? "Pending follow-ups were cancelled." : "New follow-ups may be scheduled." });
+  await db.insert(activities).values({ ownerOpenId, leadId, type: paused ? "automation_paused" : "automation_resumed", title: paused ? "Follow-up automation paused" : "Follow-up automation resumed", description: paused ? "Pending follow-ups were cancelled." : "New follow-ups may be scheduled." });
 }
 
-export async function createLeadActivity(input: { leadId: number; type: string; title: string; description: string }) {
+export async function createLeadActivity(input: { ownerOpenId: string; leadId: number; type: string; title: string; description: string }) {
   const db = await getDb();
   if (!db) throw new Error("Database is not available");
   const result = await db.insert(activities).values(input);
   return Number(result[0].insertId);
 }
 
-export async function getLeadById(leadId: number) {
+export async function getLeadById(leadId: number, ownerOpenId?: string) {
   const db = await getDb();
   if (!db) return undefined;
-  const result = await db.select().from(leads).where(eq(leads.id, leadId)).limit(1);
+  const conditions = ownerOpenId ? [eq(leads.id, leadId), eq(leads.ownerOpenId, ownerOpenId)] : [eq(leads.id, leadId)];
+  const result = await db.select().from(leads).where(and(...conditions)).limit(1);
   return result[0];
 }
 
@@ -147,10 +155,10 @@ export async function getChatSession(sessionId: string) {
   return result[0];
 }
 
-export async function createChatSession(sessionId: string) {
+export async function createChatSession(sessionId: string, ownerOpenId: string) {
   const db = await getDb();
   if (!db) throw new Error("Database is not available");
-  await db.insert(chatSessions).values({ id: sessionId });
+  await db.insert(chatSessions).values({ id: sessionId, ownerOpenId });
 }
 
 export async function updateChatSession(sessionId: string, input: Partial<Pick<ChatSession, "leadId" | "name" | "email" | "company" | "goal">>) {
@@ -344,20 +352,20 @@ export async function setFollowUpSequenceEnabled(sequenceId: number, ownerOpenId
   if (!sequence[0] || sequence[0].ownerOpenId !== ownerOpenId) throw new Error("Sequence not found");
 }
 
-export async function getLeadWithDetails(leadId: number) {
+export async function getLeadWithDetails(leadId: number, ownerOpenId: string) {
   const db = await getDb();
   if (!db) return undefined;
-  const leadResult = await db.select().from(leads).where(eq(leads.id, leadId)).limit(1);
+  const leadResult = await db.select().from(leads).where(and(eq(leads.id, leadId), eq(leads.ownerOpenId, ownerOpenId))).limit(1);
   if (!leadResult[0]) return undefined;
-  const leadActivities = await db.select().from(activities).where(eq(activities.leadId, leadId)).orderBy(desc(activities.createdAt)).limit(50);
+  const leadActivities = await db.select().from(activities).where(and(eq(activities.leadId, leadId), eq(activities.ownerOpenId, ownerOpenId))).orderBy(desc(activities.createdAt)).limit(50);
   const leadAppointments = await db.select().from(appointments).where(eq(appointments.leadId, leadId)).orderBy(desc(appointments.startsAt));
   return { ...leadResult[0], activities: leadActivities, appointments: leadAppointments };
 }
 
-export async function createLeadNote(leadId: number, content: string) {
+export async function createLeadNote(leadId: number, ownerOpenId: string, content: string) {
   const db = await getDb();
   if (!db) throw new Error("Database is not available");
-  const result = await db.insert(activities).values({ leadId, type: "note", title: "Manual note", description: content.slice(0, 2000) });
+  const result = await db.insert(activities).values({ ownerOpenId, leadId, type: "note", title: "Manual note", description: content.slice(0, 2000) });
   await db.update(leads).set({ lastActivityAt: new Date() }).where(eq(leads.id, leadId));
   return Number(result[0].insertId);
 }
@@ -411,8 +419,23 @@ export async function getAppointmentsByLead(leadId: number) {
   return db.select().from(appointments).where(eq(appointments.leadId, leadId)).orderBy(desc(appointments.startsAt));
 }
 
-export async function getChatSessionsList(limit = 50) {
+export async function getChatSessionsList(ownerOpenId: string, limit = 50) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(chatSessions).orderBy(desc(chatSessions.createdAt)).limit(limit);
+  return db.select().from(chatSessions).where(eq(chatSessions.ownerOpenId, ownerOpenId)).orderBy(desc(chatSessions.createdAt)).limit(limit);
+}
+
+export async function getCoachSettings(ownerOpenId: string): Promise<CoachSettings> {
+  const db = await getDb();
+  if (!db) return { id: 0, ownerOpenId, averageDealSize: 200, calendarStartHour: 9, calendarEndHour: 17, calendarDaysOfWeek: "1,2,3,4,5", createdAt: new Date(), updatedAt: new Date() };
+  const result = await db.select().from(coachSettings).where(eq(coachSettings.ownerOpenId, ownerOpenId)).limit(1);
+  return result[0] ?? { id: 0, ownerOpenId, averageDealSize: 200, calendarStartHour: 9, calendarEndHour: 17, calendarDaysOfWeek: "1,2,3,4,5", createdAt: new Date(), updatedAt: new Date() };
+}
+
+export async function saveCoachSettings(input: { ownerOpenId: string; averageDealSize?: number; calendarStartHour?: number; calendarEndHour?: number; calendarDaysOfWeek?: string }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is not available");
+  const { ownerOpenId, ...updates } = input;
+  await db.insert(coachSettings).values(input).onDuplicateKeyUpdate({ set: { ...updates, updatedAt: new Date() } });
+  return getCoachSettings(ownerOpenId);
 }

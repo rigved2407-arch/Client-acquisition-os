@@ -53,7 +53,7 @@ async function qualify(input: NormalizedLead) {
   try {
     const response = await invokeLLM({
       messages: [
-        { role: "system", content: "Qualify a fitness-coaching inbound lead. Return only JSON. Score fit and intent from 0 to 100. Use qualified when the person has a specific goal, clear motivation, and a plausible near-term need. Use nurture when the submission is vague or low-intent." },
+        { role: "system", content: "Qualify a fitness-coaching inbound lead. Score fit and intent from 0 to 100. Use qualified when the person has a specific transformation goal (weight loss, muscle gain, athletic performance, habit change), clear motivation, and a plausible near-term need. Use nurture when the submission is vague, low-intent, or lacks a concrete goal. Consider past attempts, timeline urgency, and readiness to invest. Never make promises. Return only JSON." },
         { role: "user", content: JSON.stringify(input) },
       ],
       response_format: { type: "json_schema", json_schema: { name: "form_lead_qualification", strict: true, schema: { type: "object", properties: { score: { type: "integer" }, stage: { type: "string", enum: ["qualified", "nurture"] }, summary: { type: "string" } }, required: ["score", "stage", "summary"], additionalProperties: false } } },
@@ -121,14 +121,14 @@ export function registerWebhookRoutes(app: Express) {
       if (!lead) return res.status(200).json({ ok: true, ignored: "lead_not_found" });
       if (eventType === "email.bounced") {
         await pauseLeadAutomation(lead.id, true);
-        await createLeadActivity({ leadId: lead.id, type: "email_bounced", title: "Email bounced", description: `Email ${email} bounced during delivery` });
+        await createLeadActivity({ ownerOpenId: lead.ownerOpenId, leadId: lead.id, type: "email_bounced", title: "Email bounced", description: `Email ${email} bounced during delivery` });
         return res.status(200).json({ ok: true, leadId: lead.id, action: "automation_paused" });
       }
       if (eventType === "email.complained") {
         await unsubscribeLead(lead.id, "Email complaint received via Resend webhook");
         return res.status(200).json({ ok: true, leadId: lead.id, action: "unsubscribed" });
       }
-      await createLeadActivity({ leadId: lead.id, type: eventType === "email.opened" ? "email_opened" : "email_clicked", title: eventType === "email.opened" ? "Email opened" : "Email link clicked", description: `Resend webhook: ${eventType}` });
+      await createLeadActivity({ ownerOpenId: lead.ownerOpenId, leadId: lead.id, type: eventType === "email.opened" ? "email_opened" : "email_clicked", title: eventType === "email.opened" ? "Email opened" : "Email link clicked", description: `Resend webhook: ${eventType}` });
       return res.status(200).json({ ok: true, leadId: lead.id, action: "activity_recorded" });
     } catch (error) {
       console.error("[Webhook] Resend processing failed", error);
@@ -146,9 +146,9 @@ export function registerWebhookRoutes(app: Express) {
       const existing = await getLeadByEmail(input.email);
       if (existing) return res.status(200).json({ ok: true, duplicate: true, leadId: existing.id });
       const qualification = await qualify(input);
-      const leadId = await createLead({ name: input.name, email: input.email, phone: input.phone, company: input.company, instagramHandle: input.instagramHandle, source: source.source, goal: input.goal, consentAt: new Date(), consentSource: source.source, consentText: input.consentText, stage: "new", score: 0 });
+      const leadId = await createLead({ name: input.name, email: input.email, phone: input.phone, company: input.company, instagramHandle: input.instagramHandle, source: source.source, goal: input.goal, consentAt: new Date(), consentSource: source.source, consentText: input.consentText, ownerOpenId: source.ownerOpenId, stage: "new", score: 0 });
       await updateLeadQualification(leadId, qualification.stage, qualification.score);
-      await createLeadActivity({ leadId, type: "webhook", title: `${input.name} entered from ${source.source}`, description: `${qualification.summary} · ${qualification.score}/100 intent score` });
+      await createLeadActivity({ ownerOpenId: source.ownerOpenId, leadId, type: "webhook", title: `${input.name} entered from ${source.source}`, description: `${qualification.summary} · ${qualification.score}/100 intent score` });
       const trigger = qualification.stage === "qualified" ? "qualified" : "new_lead";
       const sequences = await listEnabledFollowUpSequences(source.ownerOpenId, trigger);
       const steps = sequences.flatMap((sequence) => sequence.steps.map((step) => ({ ...step, sequenceName: sequence.name })));

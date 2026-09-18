@@ -14,6 +14,7 @@ export const users = mysqlTable("users", {
 
 export const leads = mysqlTable("leads", {
   id: int("id").autoincrement().primaryKey(),
+  ownerOpenId: varchar("ownerOpenId", { length: 64 }).notNull(),
   name: varchar("name", { length: 160 }).notNull(),
   email: varchar("email", { length: 320 }).notNull(),
   phone: varchar("phone", { length: 40 }),
@@ -35,6 +36,7 @@ export const leads = mysqlTable("leads", {
 
 export const activities = mysqlTable("activities", {
   id: int("id").autoincrement().primaryKey(),
+  ownerOpenId: varchar("ownerOpenId", { length: 64 }).notNull(),
   leadId: int("leadId").notNull(),
   type: varchar("type", { length: 80 }).notNull(),
   title: varchar("title", { length: 180 }).notNull(),
@@ -44,6 +46,7 @@ export const activities = mysqlTable("activities", {
 
 export const chatSessions = mysqlTable("chatSessions", {
   id: varchar("id", { length: 64 }).primaryKey(),
+  ownerOpenId: varchar("ownerOpenId", { length: 64 }).notNull(),
   leadId: int("leadId"),
   name: varchar("name", { length: 160 }),
   email: varchar("email", { length: 320 }),
@@ -146,6 +149,17 @@ export const followUpSteps = mysqlTable("followUpSteps", {
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
+export const coachSettings = mysqlTable("coachSettings", {
+  id: int("id").autoincrement().primaryKey(),
+  ownerOpenId: varchar("ownerOpenId", { length: 64 }).notNull().unique(),
+  averageDealSize: int("averageDealSize").default(200).notNull(),
+  calendarStartHour: int("calendarStartHour").default(9).notNull(),
+  calendarEndHour: int("calendarEndHour").default(17).notNull(),
+  calendarDaysOfWeek: varchar("calendarDaysOfWeek", { length: 20 }).default("1,2,3,4,5").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 export type Lead = typeof leads.$inferSelect;
@@ -161,3 +175,5 @@ export type AutomationTask = typeof automationTasks.$inferSelect;
 export type DeliverySettings = typeof deliverySettings.$inferSelect;
 export type FollowUpSequence = typeof followUpSequences.$inferSelect;
 export type FollowUpStep = typeof followUpSteps.$inferSelect;
+export type CoachSettings = typeof coachSettings.$inferSelect;
+export type InsertCoachSettings = typeof coachSettings.$inferInsert;
