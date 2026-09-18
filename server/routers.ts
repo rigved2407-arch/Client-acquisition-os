@@ -4,7 +4,7 @@ import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
-import { createChatMessage, createChatSession, createFollowUpSequence, createFollowUpStep, createLead, createLeadActivity, createAppointment, getActivities, getCalendarConnection, getChatMessages, getChatSession, getFollowUpSequence, getLeadById, getLeads, listFollowUpSequences, pauseLeadAutomation, updateChatSession, updateLeadQualification, updateLeadStage, setFollowUpSequenceEnabled, getLeadWithDetails, createLeadNote, deleteFollowUpSequence, deleteFollowUpStep, updateFollowUpSequence, updateFollowUpStep, toggleWebhookSource, deleteWebhookSource, cancelAppointmentById, getAppointmentsByLead, getChatSessionsList, getCoachSettings, saveCoachSettings } from "./db";
+import { createChatMessage, createChatSession, createFollowUpSequence, createFollowUpStep, createLead, createLeadActivity, createAppointment, getActivities, getCalendarConnection, getChatMessages, getChatSession, getFollowUpSequence, getLeadById, getLeads, listFollowUpSequences, pauseLeadAutomation, updateChatSession, updateLeadQualification, updateLeadStage, setFollowUpSequenceEnabled, getLeadWithDetails, createLeadNote, deleteFollowUpSequence, deleteFollowUpStep, updateFollowUpSequence, updateFollowUpStep, toggleWebhookSource, deleteWebhookSource, cancelAppointmentById, getAppointmentsByLead, getChatSessionsList, getCoachSettings, saveCoachSettings, createAutomationTask } from "./db";
 import { createGoogleEvent, getGoogleConnectUrl, listBusyEvents } from "./googleCalendar";
 import { ENV } from "./_core/env";
 import { createWebhookSource, listAutomationTasks, listWebhookSources } from "./db";
@@ -269,6 +269,20 @@ export const appRouter = router({
       await cancelAppointmentById(input.appointmentId);
       return { success: true };
     }),
+    markNoShow: protectedProcedure.input(z.object({ leadId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      await updateLeadStage(input.leadId, "nurture");
+      await createLeadActivity({ ownerOpenId: ctx.user.openId, leadId: input.leadId, type: "no_show", title: "No-show recorded", description: "Lead did not attend the scheduled call" });
+      const sequences = await listFollowUpSequences(ctx.user.openId);
+      const noShowSequences = sequences.filter((s) => s.trigger === "no_show" && s.enabled);
+      for (const seq of noShowSequences) {
+        const detail = await getFollowUpSequence(seq.id, ctx.user.openId);
+        if (!detail) continue;
+        for (const step of detail.steps) {
+          await createAutomationTask({ leadId: input.leadId, type: `${seq.name}:${step.channel}`, status: "pending", sendAt: new Date(Date.now() + step.delayMinutes * 60 * 1000), payload: JSON.stringify({ sequenceName: seq.name, subject: step.subject, body: step.body, channel: step.channel }) });
+        }
+      }
+      return { success: true };
+    }),
     book: publicProcedure.input(z.object({ leadId: z.number().int().positive(), startsAt: z.string().datetime(), endsAt: z.string().datetime() })).mutation(async ({ input }) => {
       const lead = await getLeadById(input.leadId);
       if (!lead) throw new Error("Lead not found");
@@ -294,7 +308,7 @@ export const appRouter = router({
       const items = await listFollowUpSequences(ctx.user.openId);
       return Promise.all(items.map((item) => getFollowUpSequence(item.id, ctx.user.openId)));
     }),
-    createSequence: protectedProcedure.input(z.object({ name: z.string().trim().min(2).max(160), trigger: z.enum(["new_lead", "qualified"]), steps: z.array(z.object({ delayMinutes: z.number().int().min(0).max(43200), channel: z.enum(["email", "sms", "task"]), subject: z.string().trim().max(220).optional(), body: z.string().trim().min(1).max(5000) })).min(1).max(12) })).mutation(async ({ ctx, input }) => {
+    createSequence: protectedProcedure.input(z.object({ name: z.string().trim().min(2).max(160), trigger: z.enum(["new_lead", "qualified", "no_show"]), steps: z.array(z.object({ delayMinutes: z.number().int().min(0).max(43200), channel: z.enum(["email", "sms", "task"]), subject: z.string().trim().max(220).optional(), body: z.string().trim().min(1).max(5000) })).min(1).max(12) })).mutation(async ({ ctx, input }) => {
       const sequenceId = await createFollowUpSequence({ ownerOpenId: ctx.user.openId, name: input.name, trigger: input.trigger, enabled: true });
       for (let index = 0; index < input.steps.length; index += 1) await createFollowUpStep({ sequenceId, position: index + 1, ...input.steps[index] });
       return getFollowUpSequence(sequenceId, ctx.user.openId);
@@ -304,7 +318,7 @@ export const appRouter = router({
       await deleteFollowUpSequence(input.sequenceId);
       return { success: true };
     }),
-    updateSequence: protectedProcedure.input(z.object({ sequenceId: z.number().int().positive(), name: z.string().trim().min(2).max(160).optional(), trigger: z.enum(["new_lead", "qualified"]).optional(), enabled: z.boolean().optional() })).mutation(async ({ input }) => {
+    updateSequence: protectedProcedure.input(z.object({ sequenceId: z.number().int().positive(), name: z.string().trim().min(2).max(160).optional(), trigger: z.enum(["new_lead", "qualified", "no_show"]).optional(), enabled: z.boolean().optional() })).mutation(async ({ input }) => {
       await updateFollowUpSequence(input.sequenceId, { name: input.name, trigger: input.trigger, enabled: input.enabled });
       return { success: true };
     }),

@@ -35,6 +35,7 @@ export default function LeadDetail() {
   const updateStage = trpc.growth.updateStage.useMutation({ onSuccess: () => { toast.success("Stage updated"); refetch(); } });
   const addNote = trpc.growth.addNote.useMutation({ onSuccess: () => { toast.success("Note added"); setNoteContent(""); refetch(); } });
   const markWon = trpc.growth.markWon.useMutation({ onSuccess: () => { toast.success("Lead marked as won"); refetch(); } });
+  const markNoShow = trpc.calendar.markNoShow.useMutation({ onSuccess: () => { toast.success("No-show recorded"); refetch(); } });
   const [noteContent, setNoteContent] = useState("");
 
   if (authLoading || isLoading) return <div className="min-h-screen bg-[#f7f8f4] flex items-center justify-center text-slate-500">Loading lead…</div>;
@@ -152,6 +153,11 @@ export default function LeadDetail() {
               {lead.stage !== "won" && (
                 <Button disabled={markWon.isPending} onClick={() => markWon.mutate({ leadId })} className="mt-4 w-full bg-[#173b2d] text-[#eff7de] hover:bg-[#24533e]">
                   <CheckCircle2 className="mr-2 h-4 w-4" /> Mark as won
+                </Button>
+              )}
+              {lead.stage === "booked" && (
+                <Button disabled={markNoShow.isPending} onClick={() => markNoShow.mutate({ leadId })} variant="outline" className="mt-2 w-full border-red-200 text-red-600 hover:bg-red-50">
+                  Mark as no-show
                 </Button>
               )}
             </div>

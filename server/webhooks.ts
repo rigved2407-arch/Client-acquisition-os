@@ -157,7 +157,7 @@ export function registerWebhookRoutes(app: Express) {
           await createAutomationTask({ leadId, type: `${step.sequenceName}:${step.channel}`, status: "pending", sendAt: new Date(Date.now() + step.delayMinutes * 60 * 1000), payload: JSON.stringify({ sequenceName: step.sequenceName, subject: step.subject, body: step.body, channel: step.channel, source: source.source }) });
         }
       } else {
-        await createAutomationTask({ leadId, type: "follow_up_email", status: "pending", sendAt: new Date(Date.now() + 5 * 60 * 1000), payload: JSON.stringify({ reason: trigger, source: source.source }) });
+        await createAutomationTask({ leadId, type: "follow_up_sms", status: "pending", sendAt: new Date(Date.now() + 5 * 60 * 1000), payload: JSON.stringify({ channel: "sms", reason: trigger, source: source.source }) });
       }
       return res.status(201).json({ ok: true, leadId, stage: qualification.stage, score: qualification.score });
     } catch (error) {
