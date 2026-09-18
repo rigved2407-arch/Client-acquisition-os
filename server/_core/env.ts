@@ -25,6 +25,8 @@ export const ENV = {
   twilioFromNumber: process.env.TWILIO_FROM_NUMBER ?? "",
   googleClientId: process.env.GOOGLE_CLIENT_ID ?? "",
   googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
+  stripeSecretKey: process.env.STRIPE_SECRET_KEY ?? "",
+  stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET ?? "",
 };
 
 export function validateRequiredEnv(): void {

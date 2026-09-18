@@ -160,6 +160,18 @@ export const coachSettings = mysqlTable("coachSettings", {
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
+export const billing = mysqlTable("billing", {
+  id: int("id").autoincrement().primaryKey(),
+  ownerOpenId: varchar("ownerOpenId", { length: 64 }).notNull().unique(),
+  stripeCustomerId: varchar("stripeCustomerId", { length: 128 }),
+  stripeSubscriptionId: varchar("stripeSubscriptionId", { length: 128 }),
+  stripePriceId: varchar("stripePriceId", { length: 128 }),
+  status: mysqlEnum("status", ["active", "trialing", "past_due", "canceled", "none"]).default("none").notNull(),
+  currentPeriodEnd: timestamp("currentPeriodEnd"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 export type Lead = typeof leads.$inferSelect;
@@ -177,3 +189,5 @@ export type FollowUpSequence = typeof followUpSequences.$inferSelect;
 export type FollowUpStep = typeof followUpSteps.$inferSelect;
 export type CoachSettings = typeof coachSettings.$inferSelect;
 export type InsertCoachSettings = typeof coachSettings.$inferInsert;
+export type Billing = typeof billing.$inferSelect;
+export type InsertBilling = typeof billing.$inferInsert;

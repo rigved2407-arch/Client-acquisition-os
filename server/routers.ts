@@ -11,6 +11,7 @@ import { createWebhookSource, listAutomationTasks, listWebhookSources } from "./
 import { createWebhookToken, tokenHash } from "./webhooks";
 import { getDeliverySettings, saveDeliverySettings } from "./db";
 import { processDueAutomationTasks } from "./delivery";
+import { getBilling, createCheckoutSession, createPortalSession } from "./billing";
 
 const demoLeads = [
   { id: 101, name: "Avery Cole", email: "avery@coleadvisory.com", company: "Cole Advisory", source: "LinkedIn", goal: "Build a predictable client pipeline", stage: "qualified", score: 92, createdAt: new Date("2026-09-16T14:20:00Z"), lastActivityAt: new Date("2026-09-17T02:40:00Z") },
@@ -347,6 +348,21 @@ export const appRouter = router({
     saveCoachSettings: protectedProcedure.input(z.object({ averageDealSize: z.number().int().min(10).max(100000).optional(), calendarStartHour: z.number().int().min(0).max(23).optional(), calendarEndHour: z.number().int().min(1).max(24).optional(), calendarDaysOfWeek: z.string().max(20).optional() })).mutation(async ({ ctx, input }) => {
       const updated = await saveCoachSettings({ ownerOpenId: ctx.user.openId, ...input });
       return updated;
+    }),
+  }),
+  billing: router({
+    status: protectedProcedure.query(async ({ ctx }) => {
+      const billingData = await getBilling(ctx.user.openId);
+      const stripePriceId = "stripePriceId" in billingData ? billingData.stripePriceId : null;
+      return { plan: stripePriceId || "none", status: billingData.status, currentPeriodEnd: "currentPeriodEnd" in billingData ? billingData.currentPeriodEnd : null, stripeCustomerId: "stripeCustomerId" in billingData ? billingData.stripeCustomerId : null };
+    }),
+    checkout: protectedProcedure.input(z.object({ plan: z.enum(["starter", "pro"]), interval: z.enum(["monthly", "yearly"]) })).mutation(async ({ ctx, input }) => {
+      const session = await createCheckoutSession({ ownerOpenId: ctx.user.openId, plan: input.plan, interval: input.interval, email: ctx.user.email || "unknown@example.com" });
+      return session;
+    }),
+    portal: protectedProcedure.mutation(async ({ ctx }) => {
+      const session = await createPortalSession(ctx.user.openId);
+      return session;
     }),
   }),
 });

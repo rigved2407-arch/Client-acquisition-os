@@ -8,6 +8,7 @@ import { registerStorageProxy } from "./storageProxy";
 import { registerGoogleCalendarRoutes } from "../googleCalendar";
 import { registerWebhookRoutes } from "../webhooks";
 import { registerDeliveryRoutes } from "../delivery";
+import { registerStripeWebhook } from "../billing";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
@@ -61,6 +62,7 @@ async function startServer() {
   registerGoogleCalendarRoutes(app);
   registerWebhookRoutes(app);
   registerDeliveryRoutes(app);
+  registerStripeWebhook(app);
 
   app.use(
     "/api/trpc",

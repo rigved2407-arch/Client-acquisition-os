@@ -13,6 +13,7 @@ import {
   followUpSequences,
   followUpSteps,
   coachSettings,
+  billing,
 } from "./schema";
 
 export const leadRelations = relations(leads, ({ many }) => ({
@@ -101,6 +102,13 @@ export const followUpStepRelations = relations(followUpSteps, ({ one }) => ({
 export const coachSettingsRelations = relations(coachSettings, ({ one }) => ({
   owner: one(users, {
     fields: [coachSettings.ownerOpenId],
+    references: [users.openId],
+  }),
+}));
+
+export const billingRelations = relations(billing, ({ one }) => ({
+  owner: one(users, {
+    fields: [billing.ownerOpenId],
     references: [users.openId],
   }),
 }));
