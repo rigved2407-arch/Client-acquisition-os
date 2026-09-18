@@ -3,6 +3,7 @@ import type { Express } from "express";
 import { invokeLLM } from "./_core/llm";
 import { createAutomationTask, createLead, createLeadActivity, getLeadByEmail, getLeadByPhone, getWebhookSourceByHash, listEnabledFollowUpSequences, pauseLeadAutomation, recordLeadReply, touchWebhookSource, unsubscribeLead, updateLeadQualification } from "./db";
 import { ENV } from "./_core/env";
+import { rateLimit } from "./rateLimit";
 
 type NormalizedLead = { name: string; email: string; phone?: string; company?: string; instagramHandle?: string; goal: string; consent: boolean; consentText?: string };
 
@@ -86,7 +87,7 @@ export function normalizeReplyPayload(payload: unknown) {
 }
 
 export function registerWebhookRoutes(app: Express) {
-  app.post("/api/webhooks/replies", async (req, res) => {
+  app.post("/api/webhooks/replies", rateLimit({ windowMs: 60_000, max: 60, keyPrefix: "webhook:reply" }), async (req, res) => {
     try {
       if (!ENV.replyWebhookSecret) return res.status(503).json({ error: "Reply webhook is not configured" });
       const provided = String(req.header("x-coachflow-webhook-secret") || req.header("authorization") || "").replace(/^Bearer\s+/i, "");
@@ -136,7 +137,7 @@ export function registerWebhookRoutes(app: Express) {
     }
   });
 
-  app.post("/api/webhooks/:token", async (req, res) => {
+  app.post("/api/webhooks/:token", rateLimit({ windowMs: 60_000, max: 30, keyPrefix: "webhook:form" }), async (req, res) => {
     try {
       const source = await getWebhookSourceByHash(hashToken(req.params.token));
       if (!source || !source.enabled) return res.status(404).json({ error: "Webhook not found" });

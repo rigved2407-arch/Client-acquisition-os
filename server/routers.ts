@@ -12,6 +12,7 @@ import { createWebhookToken, tokenHash } from "./webhooks";
 import { getDeliverySettings, saveDeliverySettings } from "./db";
 import { processDueAutomationTasks } from "./delivery";
 import { getBilling, createCheckoutSession, createPortalSession } from "./billing";
+import { verifySignedBookingToken } from "./signedBooking";
 
 const demoLeads = [
   { id: 101, name: "Avery Cole", email: "avery@coleadvisory.com", company: "Cole Advisory", source: "LinkedIn", goal: "Build a predictable client pipeline", stage: "qualified", score: 92, createdAt: new Date("2026-09-16T14:20:00Z"), lastActivityAt: new Date("2026-09-17T02:40:00Z") },
@@ -284,7 +285,11 @@ export const appRouter = router({
       }
       return { success: true };
     }),
-    book: publicProcedure.input(z.object({ leadId: z.number().int().positive(), startsAt: z.string().datetime(), endsAt: z.string().datetime() })).mutation(async ({ input }) => {
+    book: publicProcedure.input(z.object({ leadId: z.number().int().positive(), startsAt: z.string().datetime(), endsAt: z.string().datetime(), token: z.string().optional() })).mutation(async ({ input }) => {
+      if (input.token) {
+        const verification = await verifySignedBookingToken(input.token);
+        if (!verification.valid || verification.leadId !== input.leadId) throw new Error("Invalid or expired booking link");
+      }
       const lead = await getLeadById(input.leadId);
       if (!lead) throw new Error("Lead not found");
       const startsAt = new Date(input.startsAt);
