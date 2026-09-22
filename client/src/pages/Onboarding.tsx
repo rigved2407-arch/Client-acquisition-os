@@ -112,7 +112,7 @@ export default function Onboarding() {
               </div>
               <h2 className="mt-6 text-xl font-semibold">Connect your calendar</h2>
               <p className="mt-3 text-sm text-[#718073]">Connect Google Calendar so prospects can book strategy calls during your available hours.</p>
-              <Button onClick={() => navigate("/settings")} className="mt-6 bg-[#173b2d] text-[#eff7de] hover:bg-[#24533e]">
+              <Button onClick={() => navigate("/calendar")} className="mt-6 bg-[#173b2d] text-[#eff7de] hover:bg-[#24533e]">
                 <Calendar className="mr-2 h-4 w-4" /> Connect Calendar
               </Button>
               <p className="mt-3 text-xs text-[#849085]">You can also do this later in Settings.</p>

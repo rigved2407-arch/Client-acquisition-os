@@ -8,6 +8,7 @@ import { registerStorageProxy } from "../server/_core/storageProxy";
 import { registerGoogleCalendarRoutes } from "../server/googleCalendar";
 import { registerWebhookRoutes } from "../server/webhooks";
 import { registerDeliveryRoutes } from "../server/delivery";
+import { registerStripeWebhook } from "../server/billing";
 import { appRouter } from "../server/routers";
 import { createContext } from "../server/_core/context";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
@@ -18,7 +19,7 @@ function getApp(): express.Express {
   if (app) return app;
 
   app = express();
-  app.use(express.json({ limit: "50mb" }));
+  app.use(express.json({ limit: "50mb", verify: (req, _res, buf) => { (req as express.Request & { rawBody?: Buffer }).rawBody = Buffer.from(buf); } }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
   // Security headers
@@ -35,6 +36,7 @@ function getApp(): express.Express {
   registerStorageProxy(app);
   registerOAuthRoutes(app);
   registerGoogleCalendarRoutes(app);
+  registerStripeWebhook(app);
   registerWebhookRoutes(app);
   registerDeliveryRoutes(app);
 

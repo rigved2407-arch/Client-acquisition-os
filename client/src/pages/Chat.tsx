@@ -14,17 +14,19 @@ export default function Chat() {
   const [messages, setMessages] = useState<Message[]>([welcomeMessage]);
   const [leadCreated, setLeadCreated] = useState(false);
   const [createdLeadId, setCreatedLeadId] = useState<number | null>(null);
+  const [bookingUrl, setBookingUrl] = useState<string | null>(null);
   const chat = trpc.growth.chat.useMutation();
   const [phone, setPhone] = useState("");
 
   const handleSend = (content: string) => {
     setMessages((current) => [...current, { role: "user", content }]);
-    chat.mutate({ sessionId, message: content }, {
+    chat.mutate({ sessionId, message: content, phone: phone || undefined }, {
       onSuccess: (result) => {
         setMessages((current) => [...current, { role: "assistant", content: result.reply }]);
         if (result.leadCreated) {
           setLeadCreated(true);
           if (result.lead?.id) setCreatedLeadId(result.lead.id);
+          if (result.bookingUrl) setBookingUrl(result.bookingUrl);
         }
       },
       onError: () => setMessages((current) => [...current, { role: "assistant", content: "I’m sorry — I couldn’t save that message. Please try again or use the application form instead." }]),
@@ -40,7 +42,7 @@ export default function Chat() {
           <section><AIChatBox messages={messages} onSendMessage={handleSend} isLoading={chat.isPending} height={"min(680px, calc(100vh - 150px))"} className="rounded-3xl border-[#dfe8d6] shadow-[0_12px_40px_rgba(45,65,42,0.08)] [&_form]:rounded-b-3xl [&_form]:border-[#e7ece3] [&_textarea]:rounded-xl [&_textarea]:border-[#dfe8d6] [&_button]:rounded-xl [&_button]:bg-[#173b2d] [&_button]:text-[#eff7de]" placeholder="Type your answer…" emptyStateMessage="Your concierge is ready" /><div className="mt-4 flex items-center justify-between rounded-2xl border border-[#dfe8d6] bg-[#fbfcf9] px-4 py-3 text-xs text-[#718073]"><span className="flex items-center gap-2"><ShieldCheck className="h-4 w-4 text-[#83ad4e]" /> Your answers stay private.</span><span>Session saved automatically</span></div>
 {!leadCreated && <div className="mt-4"><Label className="text-xs">Phone (optional — for SMS follow-ups)</Label><Input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+1 (555) 123-4567" className="mt-2 border-[#dfe8d6]" /></div>}</section>
         </div>
-        {leadCreated && <div className="fixed bottom-5 left-1/2 z-50 flex w-[calc(100%-2rem)] max-w-md -translate-x-1/2 items-center gap-3 rounded-2xl border border-[#cfe0bd] bg-[#eff7de] px-4 py-3 text-[#416d3b] shadow-xl"><CheckCircle2 className="h-5 w-5 shrink-0" /><div className="min-w-0 flex-1"><p className="text-xs font-semibold">Your context is with the team</p><p className="mt-0.5 text-[11px]">A coach will review your answers and follow up.</p></div>{createdLeadId && <Link href={`/book?leadId=${createdLeadId}`}><Button size="sm" className="bg-[#173b2d] text-[#eff7de]">Book now</Button></Link>}<Button variant="ghost" size="sm" onClick={() => setLeadCreated(false)} className="text-[#416d3b]">Dismiss</Button></div>}
+        {leadCreated && <div className="fixed bottom-5 left-1/2 z-50 flex w-[calc(100%-2rem)] max-w-md -translate-x-1/2 items-center gap-3 rounded-2xl border border-[#cfe0bd] bg-[#eff7de] px-4 py-3 text-[#416d3b] shadow-xl"><CheckCircle2 className="h-5 w-5 shrink-0" /><div className="min-w-0 flex-1"><p className="text-xs font-semibold">Your context is with the team</p><p className="mt-0.5 text-[11px]">A coach will review your answers and follow up.</p></div>{bookingUrl && <a href={bookingUrl}><Button size="sm" className="bg-[#173b2d] text-[#eff7de]">Book now</Button></a>}<Button variant="ghost" size="sm" onClick={() => setLeadCreated(false)} className="text-[#416d3b]">Dismiss</Button></div>}
       </div>
     </main>
   );

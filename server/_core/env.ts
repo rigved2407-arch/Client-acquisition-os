@@ -19,6 +19,7 @@ export const ENV = {
   forgeApiKey: requireEnv("BUILT_IN_FORGE_API_KEY"),
   resendApiKey: process.env.RESEND_API_KEY ?? "",
   resendFromEmail: process.env.RESEND_FROM_EMAIL ?? "",
+  resendWebhookSecret: process.env.RESEND_WEBHOOK_SECRET ?? "",
   replyWebhookSecret: process.env.REPLY_WEBHOOK_SECRET ?? "",
   twilioAccountSid: process.env.TWILIO_ACCOUNT_SID ?? "",
   twilioAuthToken: process.env.TWILIO_AUTH_TOKEN ?? "",
@@ -27,6 +28,10 @@ export const ENV = {
   googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
   stripeSecretKey: process.env.STRIPE_SECRET_KEY ?? "",
   stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET ?? "",
+  stripePriceStarterMonthly: process.env.STRIPE_PRICE_STARTER_MONTHLY ?? "",
+  stripePriceStarterYearly: process.env.STRIPE_PRICE_STARTER_YEARLY ?? "",
+  stripePriceProMonthly: process.env.STRIPE_PRICE_PRO_MONTHLY ?? "",
+  stripePriceProYearly: process.env.STRIPE_PRICE_PRO_YEARLY ?? "",
 };
 
 export function validateRequiredEnv(): void {

@@ -93,10 +93,15 @@ export async function updateLeadQualification(leadId: number, stage: "new" | "qu
   await db.update(leads).set({ stage, score, lastActivityAt: new Date() }).where(eq(leads.id, leadId));
 }
 
-export async function updateLeadStage(leadId: number, stage: "new" | "qualified" | "booked" | "won" | "nurture") {
+export async function updateLeadStage(leadId: number, stage: "new" | "qualified" | "booked" | "won" | "nurture", ownerOpenId?: string) {
   const db = await getDb();
   if (!db) throw new Error("Database is not available");
-  await db.update(leads).set({ stage, lastActivityAt: new Date() }).where(eq(leads.id, leadId));
+  const condition = ownerOpenId ? and(eq(leads.id, leadId), eq(leads.ownerOpenId, ownerOpenId)) : eq(leads.id, leadId);
+  if (ownerOpenId) {
+    const owned = await db.select({ id: leads.id }).from(leads).where(condition).limit(1);
+    if (!owned[0]) throw new Error("Lead not found");
+  }
+  await db.update(leads).set({ stage, lastActivityAt: new Date() }).where(condition);
 }
 
 export async function recordLeadReply(leadId: number, message: string, channel = "email") {
@@ -121,11 +126,12 @@ export async function unsubscribeLead(leadId: number, reason = "Lead requested n
   await db.insert(activities).values({ ownerOpenId, leadId, type: "unsubscribe", title: "Lead unsubscribed", description: reason });
 }
 
-export async function pauseLeadAutomation(leadId: number, paused: boolean) {
+export async function pauseLeadAutomation(leadId: number, paused: boolean, requestedOwnerOpenId?: string) {
   const db = await getDb();
   if (!db) throw new Error("Database is not available");
   const lead = await db.select().from(leads).where(eq(leads.id, leadId)).limit(1);
-  const ownerOpenId = lead[0]?.ownerOpenId ?? "unknown";
+  if (!lead[0] || (requestedOwnerOpenId && lead[0].ownerOpenId !== requestedOwnerOpenId)) throw new Error("Lead not found");
+  const ownerOpenId = lead[0].ownerOpenId;
   await db.update(leads).set({ automationPaused: paused, lastActivityAt: new Date() }).where(eq(leads.id, leadId));
   if (paused) await db.update(automationTasks).set({ status: "cancelled", lastError: "Cancelled by operator.", updatedAt: new Date() }).where(and(eq(automationTasks.leadId, leadId), eq(automationTasks.status, "pending")));
   await db.insert(activities).values({ ownerOpenId, leadId, type: paused ? "automation_paused" : "automation_resumed", title: paused ? "Follow-up automation paused" : "Follow-up automation resumed", description: paused ? "Pending follow-ups were cancelled." : "New follow-ups may be scheduled." });
@@ -210,17 +216,19 @@ export async function createAppointment(input: typeof appointments.$inferInsert)
   return Number(result[0].insertId);
 }
 
-export async function getLeadByEmail(email: string) {
+export async function getLeadByEmail(email: string, ownerOpenId?: string) {
   const db = await getDb();
   if (!db) throw new Error("Database is not available");
-  const result = await db.select().from(leads).where(eq(leads.email, email)).limit(1);
+  const condition = ownerOpenId ? and(eq(leads.email, email), eq(leads.ownerOpenId, ownerOpenId)) : eq(leads.email, email);
+  const result = await db.select().from(leads).where(condition).limit(1);
   return result[0];
 }
 
-export async function getLeadByPhone(phone: string) {
+export async function getLeadByPhone(phone: string, ownerOpenId?: string) {
   const db = await getDb();
   if (!db) throw new Error("Database is not available");
-  const result = await db.select().from(leads).where(eq(leads.phone, phone)).limit(1);
+  const condition = ownerOpenId ? and(eq(leads.phone, phone), eq(leads.ownerOpenId, ownerOpenId)) : eq(leads.phone, phone);
+  const result = await db.select().from(leads).where(condition).limit(1);
   return result[0];
 }
 
@@ -257,16 +265,19 @@ export async function createAutomationTask(input: typeof automationTasks.$inferI
   return Number(result[0].insertId);
 }
 
-export async function listAutomationTasks(limit = 50) {
+export async function listAutomationTasks(ownerOpenId?: string, limit = 50) {
   const db = await getDb();
   if (!db) throw new Error("Database is not available");
-  return db.select().from(automationTasks).orderBy(asc(automationTasks.sendAt)).limit(limit);
+  if (!ownerOpenId) return db.select().from(automationTasks).orderBy(asc(automationTasks.sendAt)).limit(limit);
+  const rows = await db.select({ task: automationTasks }).from(automationTasks).innerJoin(leads, eq(automationTasks.leadId, leads.id)).where(eq(leads.ownerOpenId, ownerOpenId)).orderBy(asc(automationTasks.sendAt)).limit(limit);
+  return rows.map((row) => row.task);
 }
 
-export async function listDueAutomationTasks(limit = 20) {
+export async function listDueAutomationTasks(ownerOpenId?: string, limit = 20) {
   const db = await getDb();
   if (!db) throw new Error("Database is not available");
-  return db.select({ task: automationTasks, lead: leads }).from(automationTasks).innerJoin(leads, eq(automationTasks.leadId, leads.id)).where(and(eq(automationTasks.status, "pending"), lte(automationTasks.sendAt, new Date()))).orderBy(asc(automationTasks.sendAt)).limit(limit);
+  const conditions = ownerOpenId ? and(eq(automationTasks.status, "pending"), lte(automationTasks.sendAt, new Date()), eq(leads.ownerOpenId, ownerOpenId)) : and(eq(automationTasks.status, "pending"), lte(automationTasks.sendAt, new Date()));
+  return db.select({ task: automationTasks, lead: leads }).from(automationTasks).innerJoin(leads, eq(automationTasks.leadId, leads.id)).where(conditions).orderBy(asc(automationTasks.sendAt)).limit(limit);
 }
 
 export async function getDeliverySettings(ownerOpenId: string) {
@@ -358,7 +369,7 @@ export async function getLeadWithDetails(leadId: number, ownerOpenId: string) {
   const leadResult = await db.select().from(leads).where(and(eq(leads.id, leadId), eq(leads.ownerOpenId, ownerOpenId))).limit(1);
   if (!leadResult[0]) return undefined;
   const leadActivities = await db.select().from(activities).where(and(eq(activities.leadId, leadId), eq(activities.ownerOpenId, ownerOpenId))).orderBy(desc(activities.createdAt)).limit(50);
-  const leadAppointments = await db.select().from(appointments).where(eq(appointments.leadId, leadId)).orderBy(desc(appointments.startsAt));
+  const leadAppointments = await db.select().from(appointments).where(and(eq(appointments.leadId, leadId), eq(appointments.ownerOpenId, ownerOpenId))).orderBy(desc(appointments.startsAt));
   return { ...leadResult[0], activities: leadActivities, appointments: leadAppointments };
 }
 
@@ -366,57 +377,64 @@ export async function createLeadNote(leadId: number, ownerOpenId: string, conten
   const db = await getDb();
   if (!db) throw new Error("Database is not available");
   const result = await db.insert(activities).values({ ownerOpenId, leadId, type: "note", title: "Manual note", description: content.slice(0, 2000) });
-  await db.update(leads).set({ lastActivityAt: new Date() }).where(eq(leads.id, leadId));
+  await db.update(leads).set({ lastActivityAt: new Date() }).where(and(eq(leads.id, leadId), eq(leads.ownerOpenId, ownerOpenId)));
   return Number(result[0].insertId);
 }
 
-export async function deleteFollowUpSequence(sequenceId: number) {
+export async function deleteFollowUpSequence(sequenceId: number, ownerOpenId: string) {
   const db = await getDb();
   if (!db) throw new Error("Database is not available");
+  const sequence = await db.select({ id: followUpSequences.id }).from(followUpSequences).where(and(eq(followUpSequences.id, sequenceId), eq(followUpSequences.ownerOpenId, ownerOpenId))).limit(1);
+  if (!sequence[0]) throw new Error("Sequence not found");
   await db.delete(followUpSteps).where(eq(followUpSteps.sequenceId, sequenceId));
-  await db.delete(followUpSequences).where(eq(followUpSequences.id, sequenceId));
+  await db.delete(followUpSequences).where(and(eq(followUpSequences.id, sequenceId), eq(followUpSequences.ownerOpenId, ownerOpenId)));
 }
 
-export async function deleteFollowUpStep(stepId: number) {
+export async function deleteFollowUpStep(stepId: number, ownerOpenId: string) {
   const db = await getDb();
   if (!db) throw new Error("Database is not available");
+  const step = await db.select({ id: followUpSteps.id }).from(followUpSteps).innerJoin(followUpSequences, eq(followUpSteps.sequenceId, followUpSequences.id)).where(and(eq(followUpSteps.id, stepId), eq(followUpSequences.ownerOpenId, ownerOpenId))).limit(1);
+  if (!step[0]) throw new Error("Step not found");
   await db.delete(followUpSteps).where(eq(followUpSteps.id, stepId));
 }
 
-export async function updateFollowUpSequence(sequenceId: number, data: Partial<Pick<typeof followUpSequences.$inferInsert, "name" | "trigger" | "enabled">>) {
+export async function updateFollowUpSequence(sequenceId: number, ownerOpenId: string, data: Partial<Pick<typeof followUpSequences.$inferInsert, "name" | "trigger" | "enabled">>) {
   const db = await getDb();
   if (!db) throw new Error("Database is not available");
-  await db.update(followUpSequences).set({ ...data, updatedAt: new Date() }).where(eq(followUpSequences.id, sequenceId));
+  const result = await db.update(followUpSequences).set({ ...data, updatedAt: new Date() }).where(and(eq(followUpSequences.id, sequenceId), eq(followUpSequences.ownerOpenId, ownerOpenId)));
+  if (!result[0] || result[0].affectedRows === 0) throw new Error("Sequence not found");
 }
 
-export async function updateFollowUpStep(stepId: number, data: Partial<Pick<typeof followUpSteps.$inferInsert, "delayMinutes" | "channel" | "subject" | "body" | "position">>) {
+export async function updateFollowUpStep(stepId: number, ownerOpenId: string, data: Partial<Pick<typeof followUpSteps.$inferInsert, "delayMinutes" | "channel" | "subject" | "body" | "position">>) {
   const db = await getDb();
   if (!db) throw new Error("Database is not available");
+  const step = await db.select({ id: followUpSteps.id }).from(followUpSteps).innerJoin(followUpSequences, eq(followUpSteps.sequenceId, followUpSequences.id)).where(and(eq(followUpSteps.id, stepId), eq(followUpSequences.ownerOpenId, ownerOpenId))).limit(1);
+  if (!step[0]) throw new Error("Step not found");
   await db.update(followUpSteps).set({ ...data, updatedAt: new Date() }).where(eq(followUpSteps.id, stepId));
 }
 
-export async function toggleWebhookSource(sourceId: number, enabled: boolean) {
+export async function toggleWebhookSource(sourceId: number, ownerOpenId: string, enabled: boolean) {
   const db = await getDb();
   if (!db) throw new Error("Database is not available");
-  await db.update(webhookSources).set({ enabled }).where(eq(webhookSources.id, sourceId));
+  await db.update(webhookSources).set({ enabled }).where(and(eq(webhookSources.id, sourceId), eq(webhookSources.ownerOpenId, ownerOpenId)));
 }
 
-export async function deleteWebhookSource(sourceId: number) {
+export async function deleteWebhookSource(sourceId: number, ownerOpenId: string) {
   const db = await getDb();
   if (!db) throw new Error("Database is not available");
-  await db.delete(webhookSources).where(eq(webhookSources.id, sourceId));
+  await db.delete(webhookSources).where(and(eq(webhookSources.id, sourceId), eq(webhookSources.ownerOpenId, ownerOpenId)));
 }
 
-export async function cancelAppointmentById(appointmentId: number) {
+export async function cancelAppointmentById(appointmentId: number, ownerOpenId: string) {
   const db = await getDb();
   if (!db) throw new Error("Database is not available");
-  await db.update(appointments).set({ status: "cancelled" }).where(eq(appointments.id, appointmentId));
+  await db.update(appointments).set({ status: "cancelled" }).where(and(eq(appointments.id, appointmentId), eq(appointments.ownerOpenId, ownerOpenId)));
 }
 
-export async function getAppointmentsByLead(leadId: number) {
+export async function getAppointmentsByLead(leadId: number, ownerOpenId: string) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(appointments).where(eq(appointments.leadId, leadId)).orderBy(desc(appointments.startsAt));
+  return db.select().from(appointments).where(and(eq(appointments.leadId, leadId), eq(appointments.ownerOpenId, ownerOpenId))).orderBy(desc(appointments.startsAt));
 }
 
 export async function getChatSessionsList(ownerOpenId: string, limit = 50) {

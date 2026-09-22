@@ -52,7 +52,7 @@ async function startServer() {
   const app = express();
   const server = createServer(app);
 
-  app.use(express.json({ limit: "50mb" }));
+  app.use(express.json({ limit: "50mb", verify: (req, _res, buf) => { (req as express.Request & { rawBody?: Buffer }).rawBody = Buffer.from(buf); } }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
   addSecurityHeaders(app);
@@ -60,9 +60,9 @@ async function startServer() {
   registerStorageProxy(app);
   registerOAuthRoutes(app);
   registerGoogleCalendarRoutes(app);
+  registerStripeWebhook(app);
   registerWebhookRoutes(app);
   registerDeliveryRoutes(app);
-  registerStripeWebhook(app);
 
   app.use(
     "/api/trpc",

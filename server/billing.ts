@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import type { Express } from "express";
 import { eq } from "drizzle-orm";
 import { ENV } from "./_core/env";
@@ -5,8 +6,8 @@ import { getDb } from "./db";
 import { billing } from "../drizzle/schema";
 
 const PLAN_PRICES: Record<string, { monthly: string; yearly: string }> = {
-  starter: { monthly: "price_starter_monthly", yearly: "price_starter_yearly" },
-  pro: { monthly: "price_pro_monthly", yearly: "price_pro_yearly" },
+  starter: { monthly: ENV.stripePriceStarterMonthly, yearly: ENV.stripePriceStarterYearly },
+  pro: { monthly: ENV.stripePriceProMonthly, yearly: ENV.stripePriceProYearly },
 };
 
 function stripeHeaders() {
@@ -25,6 +26,7 @@ export async function createCheckoutSession(input: { ownerOpenId: string; plan: 
   const prices = PLAN_PRICES[input.plan];
   if (!prices) throw new Error(`Unknown plan: ${input.plan}`);
   const priceId = prices[input.interval];
+  if (!priceId) throw new Error("Stripe price IDs are not configured for this plan.");
   const baseUrl = process.env.PUBLIC_APP_URL || "http://localhost:3000";
   const response = await fetch("https://api.stripe.com/v1/checkout/sessions", {
     method: "POST",
@@ -33,8 +35,8 @@ export async function createCheckoutSession(input: { ownerOpenId: string; plan: 
       mode: "subscription",
       "line_items[0][price]": priceId,
       "line_items[0][quantity]": "1",
-      success_url: `${baseUrl}/settings?billing=success`,
-      cancel_url: `${baseUrl}/settings?billing=cancel`,
+      success_url: `${baseUrl}/onboarding?billing=success`,
+      cancel_url: `${baseUrl}/onboarding?billing=cancel`,
       "metadata[ownerOpenId]": input.ownerOpenId,
       "metadata[plan]": input.plan,
       customer_email: input.email,
@@ -52,7 +54,7 @@ export async function createPortalSession(ownerOpenId: string) {
   const response = await fetch("https://api.stripe.com/v1/billing_portal/sessions", {
     method: "POST",
     headers: stripeHeaders(),
-    body: new URLSearchParams({ customer: customer.stripeCustomerId, return_url: `${baseUrl}/settings` }),
+    body: new URLSearchParams({ customer: customer.stripeCustomerId, return_url: `${baseUrl}/onboarding` }),
   });
   if (!response.ok) throw new Error(`Stripe portal failed: ${response.status}`);
   const session = await response.json() as { url?: string };
@@ -73,16 +75,17 @@ function extractOwnerOpenId(metadata: Record<string, string | null> | undefined)
 export function registerStripeWebhook(app: Express) {
   app.post("/api/webhooks/stripe", async (req, res) => {
     try {
-      const sig = req.headers["stripe-signature"];
-      if (!sig || !ENV.stripeWebhookSecret) return res.status(400).json({ error: "Missing stripe-signature" });
-      const body = JSON.stringify(req.body);
-      const timestamp = req.headers["stripe-timestamp"] as string;
-      const payload = `${timestamp}.${body}`;
-      const encoder = new TextEncoder();
-      const key = await crypto.subtle.importKey("raw", encoder.encode(ENV.stripeWebhookSecret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-      const signatureBuffer = await crypto.subtle.sign("HMAC", key, encoder.encode(payload));
-      const expectedSig = Array.from(new Uint8Array(signatureBuffer)).map((b) => b.toString(16).padStart(2, "0")).join("");
-      if (sig !== `t=${expectedSig}`) return res.status(400).json({ error: "Invalid signature" });
+      const signatureHeader = String(req.headers["stripe-signature"] || "");
+      const rawBody = (req as Express.Request & { rawBody?: Buffer }).rawBody;
+      if (!signatureHeader || !ENV.stripeWebhookSecret || !rawBody) return res.status(400).json({ error: "Missing Stripe webhook signature or raw body" });
+      const parts = Object.fromEntries(signatureHeader.split(",").map((part) => part.split("=", 2))) as Record<string, string>;
+      const timestamp = parts.t;
+      const signature = parts.v1;
+      if (!timestamp || !signature || Math.abs(Date.now() / 1000 - Number(timestamp)) > 300) return res.status(400).json({ error: "Invalid or expired Stripe signature" });
+      const expectedSig = crypto.createHmac("sha256", ENV.stripeWebhookSecret).update(`${timestamp}.${rawBody.toString("utf8")}`).digest("hex");
+      const expected = Buffer.from(expectedSig, "hex");
+      const actual = Buffer.from(signature, "hex");
+      if (expected.length !== actual.length || !crypto.timingSafeEqual(expected, actual)) return res.status(400).json({ error: "Invalid signature" });
 
       const event = req.body as { type?: string; data?: { object?: Record<string, unknown> } };
       const eventType = event.type;
@@ -97,7 +100,10 @@ export function registerStripeWebhook(app: Express) {
       } else if (eventType === "customer.subscription.updated" && ownerOpenId) {
         const status = String(obj.status || "active") as "active" | "trialing" | "past_due" | "canceled";
         const currentPeriodEnd = obj.current_period_end ? new Date(Number(obj.current_period_end) * 1000) : undefined;
-        const priceId = Array.isArray(obj.items) && obj.items[0] ? String((obj.items[0] as Record<string, unknown>).price || "") : undefined;
+        const items = obj.items as { data?: Array<Record<string, unknown>> } | undefined;
+        const firstItem = items?.data?.[0];
+        const price = firstItem?.price as Record<string, unknown> | undefined;
+        const priceId = price?.id ? String(price.id) : undefined;
         await upsertBilling({ ownerOpenId, status: status === "active" || status === "trialing" ? status : status === "past_due" ? "past_due" : "canceled", currentPeriodEnd, stripePriceId: priceId });
       } else if (eventType === "customer.subscription.deleted" && ownerOpenId) {
         await upsertBilling({ ownerOpenId, status: "canceled" });

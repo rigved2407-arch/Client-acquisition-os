@@ -39,5 +39,5 @@ export async function createBookingUrl(leadId: number, baseUrl?: string): Promis
   const expiresAtMs = Date.now() + 7 * 24 * 60 * 60 * 1000;
   const token = await createSignedBookingToken(leadId, expiresAtMs);
   const base = baseUrl || process.env.PUBLIC_APP_URL || "http://localhost:3000";
-  return `${base}/book?token=${token}`;
+  return `${base}/book?leadId=${encodeURIComponent(String(leadId))}&token=${encodeURIComponent(token)}`;
 }

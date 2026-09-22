@@ -40,7 +40,7 @@ async function sendWithTwilio(input: { to: string; from: string; body: string })
 
 export async function processDueAutomationTasks(ownerOpenId = ENV.ownerOpenId): Promise<DeliverySummary> {
   const settings = await getDeliverySettings(ownerOpenId);
-  const due = await listDueAutomationTasks();
+  const due = await listDueAutomationTasks(ownerOpenId);
   const summary: DeliverySummary = { scanned: due.length, sent: 0, blocked: 0, failed: 0, skipped: 0 };
 
   for (const item of due) {

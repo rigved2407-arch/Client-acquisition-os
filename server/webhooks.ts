@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import type { Express } from "express";
+import type { Express, Request } from "express";
 import { invokeLLM } from "./_core/llm";
 import { createAutomationTask, createLead, createLeadActivity, getLeadByEmail, getLeadByPhone, getWebhookSourceByHash, listEnabledFollowUpSequences, pauseLeadAutomation, recordLeadReply, touchWebhookSource, unsubscribeLead, updateLeadQualification } from "./db";
 import { ENV } from "./_core/env";
@@ -86,6 +86,23 @@ export function normalizeReplyPayload(payload: unknown) {
   return { email, phone: phone || undefined, message, channel };
 }
 
+function verifyResendSignature(req: Request, rawBody?: Buffer) {
+  if (!ENV.resendWebhookSecret || !rawBody) return false;
+  const webhookId = String(req.header("svix-id") || "");
+  const timestamp = String(req.header("svix-timestamp") || "");
+  const signatureHeader = String(req.header("svix-signature") || "");
+  const timestampSeconds = Number(timestamp);
+  if (!webhookId || !timestamp || !Number.isFinite(timestampSeconds) || Math.abs(Date.now() / 1000 - timestampSeconds) > 300) return false;
+  const secretBytes = Buffer.from(ENV.resendWebhookSecret.replace(/^whsec_/, ""), "base64");
+  const signedPayload = `${webhookId}.${timestamp}.${rawBody.toString("utf8")}`;
+  const expected = crypto.createHmac("sha256", secretBytes).update(signedPayload).digest("base64");
+  return signatureHeader.split(" ").some((value) => {
+    const actual = Buffer.from(value.replace(/^v1,/, ""));
+    const expectedBuffer = Buffer.from(expected);
+    return expectedBuffer.length === actual.length && crypto.timingSafeEqual(expectedBuffer, actual);
+  });
+}
+
 export function registerWebhookRoutes(app: Express) {
   app.post("/api/webhooks/replies", rateLimit({ windowMs: 60_000, max: 60, keyPrefix: "webhook:reply" }), async (req, res) => {
     try {
@@ -110,6 +127,9 @@ export function registerWebhookRoutes(app: Express) {
   });
   app.post("/api/webhooks/resend", async (req, res) => {
     try {
+      const rawBody = (req as Request & { rawBody?: Buffer }).rawBody;
+      if (!ENV.resendWebhookSecret) return res.status(503).json({ error: "Resend webhook is not configured" });
+      if (!verifyResendSignature(req, rawBody)) return res.status(401).json({ error: "Invalid Resend webhook signature" });
       const body = req.body as Record<string, unknown>;
       const eventType = String(body.type || "");
       const data = (body.data && typeof body.data === "object" ? body.data : {}) as Record<string, unknown>;
@@ -144,7 +164,7 @@ export function registerWebhookRoutes(app: Express) {
       const input = normalizeFormPayload(req.body);
       if (!input.consent) return res.status(202).json({ ok: true, status: "ignored_without_contact_consent" });
       await touchWebhookSource(source.id);
-      const existing = await getLeadByEmail(input.email);
+      const existing = await getLeadByEmail(input.email, source.ownerOpenId);
       if (existing) return res.status(200).json({ ok: true, duplicate: true, leadId: existing.id });
       const qualification = await qualify(input);
       const leadId = await createLead({ name: input.name, email: input.email, phone: input.phone, company: input.company, instagramHandle: input.instagramHandle, source: source.source, goal: input.goal, consentAt: new Date(), consentSource: source.source, consentText: input.consentText, ownerOpenId: source.ownerOpenId, stage: "new", score: 0 });

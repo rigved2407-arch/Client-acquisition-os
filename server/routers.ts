@@ -12,7 +12,7 @@ import { createWebhookToken, tokenHash } from "./webhooks";
 import { getDeliverySettings, saveDeliverySettings } from "./db";
 import { processDueAutomationTasks } from "./delivery";
 import { getBilling, createCheckoutSession, createPortalSession } from "./billing";
-import { verifySignedBookingToken } from "./signedBooking";
+import { createBookingUrl, verifySignedBookingToken } from "./signedBooking";
 
 const demoLeads = [
   { id: 101, name: "Avery Cole", email: "avery@coleadvisory.com", company: "Cole Advisory", source: "LinkedIn", goal: "Build a predictable client pipeline", stage: "qualified", score: 92, createdAt: new Date("2026-09-16T14:20:00Z"), lastActivityAt: new Date("2026-09-17T02:40:00Z") },
@@ -177,8 +177,8 @@ export const appRouter = router({
       if (!lead) throw new Error("Lead not found");
       return lead;
     }),
-    updateStage: protectedProcedure.input(z.object({ leadId: z.number().int().positive(), stage: z.enum(["new", "qualified", "booked", "won", "nurture"]) })).mutation(async ({ input }) => {
-      await updateLeadStage(input.leadId, input.stage);
+    updateStage: protectedProcedure.input(z.object({ leadId: z.number().int().positive(), stage: z.enum(["new", "qualified", "booked", "won", "nurture"]) })).mutation(async ({ ctx, input }) => {
+      await updateLeadStage(input.leadId, input.stage, ctx.user.openId);
       return { success: true };
     }),
     addNote: protectedProcedure.input(z.object({ leadId: z.number().int().positive(), content: z.string().trim().min(1).max(2000) })).mutation(async ({ ctx, input }) => {
@@ -186,8 +186,8 @@ export const appRouter = router({
       return { success: true };
     }),
     markWon: protectedProcedure.input(z.object({ leadId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
-      await updateLeadStage(input.leadId, "won");
-      await pauseLeadAutomation(input.leadId, true);
+      await updateLeadStage(input.leadId, "won", ctx.user.openId);
+      await pauseLeadAutomation(input.leadId, true, ctx.user.openId);
       await createLeadActivity({ ownerOpenId: ctx.user.openId, leadId: input.leadId, type: "won", title: "Lead marked as won", description: "Manually marked as a won client" });
       return { success: true };
     }),
@@ -207,7 +207,7 @@ export const appRouter = router({
       return { success: true, lead, qualification };
     }),
     qualifyLead: publicProcedure.input(z.object({ transcript: z.string().min(10) })).mutation(async ({ input }) => qualifyWithAI({ name: "Prospect", email: "prospect@example.com", goal: input.transcript, source: "Manual test" })),
-    chat: publicProcedure.input(chatInput).mutation(async ({ input }) => {
+    chat: publicProcedure.input(chatInput.extend({ phone: z.string().trim().max(40).optional() })).mutation(async ({ input }) => {
       let session = await getChatSession(input.sessionId);
       if (!session) {
         await createChatSession(input.sessionId, ENV.ownerOpenId);
@@ -223,21 +223,31 @@ export const appRouter = router({
 
       let lead = session.leadId ? await getLeadById(session.leadId) : undefined;
       if (!lead && result.ready && nextProfile.name && nextProfile.email && nextProfile.goal) {
-        const leadId = await createLead({ name: nextProfile.name, email: nextProfile.email, company: nextProfile.company || undefined, source: "AI concierge", goal: nextProfile.goal, ownerOpenId: ENV.ownerOpenId, stage: "new", score: 0 });
+        const leadId = await createLead({ name: nextProfile.name, email: nextProfile.email, phone: input.phone || undefined, company: nextProfile.company || undefined, source: "AI concierge", goal: nextProfile.goal, ownerOpenId: ENV.ownerOpenId, stage: "new", score: 0 });
         await updateLeadQualification(leadId, "qualified", result.score);
         await createLeadActivity({ ownerOpenId: ENV.ownerOpenId, leadId, type: "qualified", title: `${nextProfile.name} was qualified by AI concierge`, description: `Conversation captured · ${result.score}/100 intent score` });
         await updateChatSession(input.sessionId, { leadId });
         lead = await getLeadById(leadId);
       }
       await createChatMessage({ sessionId: input.sessionId, role: "assistant", content: result.reply });
-      return { reply: result.reply, profile: nextProfile, leadCreated: Boolean(lead && !session.leadId), lead };
+      const bookingUrl = lead ? await createBookingUrl(lead.id) : null;
+      return { reply: result.reply, profile: nextProfile, leadCreated: Boolean(lead && !session.leadId), lead, bookingUrl };
     }),
   }),
   calendar: router({
     connect: protectedProcedure.query(({ ctx }) => ({ url: getGoogleConnectUrl(ctx.req, ctx.user.openId) })),
     status: protectedProcedure.query(async ({ ctx }) => ({ connected: Boolean(await getCalendarConnection(ctx.user.openId)) })),
-    availability: publicProcedure.input(z.object({ from: z.string().datetime().optional() })).query(async ({ input }) => {
-      const ownerOpenId = ENV.ownerOpenId;
+    availability: publicProcedure.input(z.object({ from: z.string().datetime().optional(), leadId: z.number().int().positive().optional(), token: z.string().optional() })).query(async ({ ctx, input }) => {
+      let ownerOpenId = ctx.user?.openId;
+      if (input.token) {
+        if (!input.leadId) throw new Error("Booking link is incomplete");
+        const verification = await verifySignedBookingToken(input.token);
+        if (!verification.valid || verification.leadId !== input.leadId) throw new Error("Invalid or expired booking link");
+        const tokenLead = await getLeadById(input.leadId);
+        if (!tokenLead) throw new Error("Lead not found");
+        ownerOpenId = tokenLead.ownerOpenId;
+      }
+      if (!ownerOpenId) throw new Error("A signed booking link is required");
       const connection = await getCalendarConnection(ownerOpenId);
       if (!connection) return { connected: false, slots: [] };
       const settings = await getCoachSettings(ownerOpenId);
@@ -266,13 +276,19 @@ export const appRouter = router({
       }
       return { connected: true, slots: slots.slice(0, 24) };
     }),
-    appointments: protectedProcedure.input(z.object({ leadId: z.number().int().positive() })).query(async ({ input }) => getAppointmentsByLead(input.leadId)),
-    cancel: protectedProcedure.input(z.object({ appointmentId: z.number().int().positive() })).mutation(async ({ input }) => {
-      await cancelAppointmentById(input.appointmentId);
+    appointments: protectedProcedure.input(z.object({ leadId: z.number().int().positive() })).query(async ({ ctx, input }) => {
+      const lead = await getLeadById(input.leadId, ctx.user.openId);
+      if (!lead) throw new Error("Lead not found");
+      return getAppointmentsByLead(input.leadId, ctx.user.openId);
+    }),
+    cancel: protectedProcedure.input(z.object({ appointmentId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      await cancelAppointmentById(input.appointmentId, ctx.user.openId);
       return { success: true };
     }),
     markNoShow: protectedProcedure.input(z.object({ leadId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
-      await updateLeadStage(input.leadId, "nurture");
+      const lead = await getLeadById(input.leadId, ctx.user.openId);
+      if (!lead) throw new Error("Lead not found");
+      await updateLeadStage(input.leadId, "nurture", ctx.user.openId);
       await createLeadActivity({ ownerOpenId: ctx.user.openId, leadId: input.leadId, type: "no_show", title: "No-show recorded", description: "Lead did not attend the scheduled call" });
       const sequences = await listFollowUpSequences(ctx.user.openId);
       const noShowSequences = sequences.filter((s) => s.trigger === "no_show" && s.enabled);
@@ -285,31 +301,33 @@ export const appRouter = router({
       }
       return { success: true };
     }),
-    book: publicProcedure.input(z.object({ leadId: z.number().int().positive(), startsAt: z.string().datetime(), endsAt: z.string().datetime(), token: z.string().optional() })).mutation(async ({ input }) => {
+    book: publicProcedure.input(z.object({ leadId: z.number().int().positive(), startsAt: z.string().datetime(), endsAt: z.string().datetime(), token: z.string().optional() })).mutation(async ({ ctx, input }) => {
       if (input.token) {
         const verification = await verifySignedBookingToken(input.token);
         if (!verification.valid || verification.leadId !== input.leadId) throw new Error("Invalid or expired booking link");
+      } else if (!ctx.user) {
+        throw new Error("A signed booking link is required");
       }
-      const lead = await getLeadById(input.leadId);
+      const lead = await getLeadById(input.leadId, input.token ? undefined : ctx.user?.openId);
       if (!lead) throw new Error("Lead not found");
       const startsAt = new Date(input.startsAt);
       const endsAt = new Date(input.endsAt);
       if (startsAt <= new Date() || endsAt <= startsAt || endsAt.getTime() - startsAt.getTime() > 60 * 60 * 1000) throw new Error("Invalid appointment time");
-      const event = await createGoogleEvent(ENV.ownerOpenId, { summary: `Strategy call with ${lead.name}`, description: `CoachFlow qualified lead.\nGoal: ${lead.goal || "Not provided"}\nSource: ${lead.source}`, startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString(), attendeeName: lead.name, attendeeEmail: lead.email });
-      await createAppointment({ leadId: lead.id, ownerOpenId: ENV.ownerOpenId, provider: "google", providerEventId: event.id, startsAt, endsAt, inviteeName: lead.name, inviteeEmail: lead.email, status: "confirmed" });
+      const event = await createGoogleEvent(lead.ownerOpenId, { summary: `Strategy call with ${lead.name}`, description: `CoachFlow qualified lead.\nGoal: ${lead.goal || "Not provided"}\nSource: ${lead.source}`, startsAt: startsAt.toISOString(), endsAt: endsAt.toISOString(), attendeeName: lead.name, attendeeEmail: lead.email });
+      await createAppointment({ leadId: lead.id, ownerOpenId: lead.ownerOpenId, provider: "google", providerEventId: event.id, startsAt, endsAt, inviteeName: lead.name, inviteeEmail: lead.email, status: "confirmed" });
       await updateLeadStage(lead.id, "booked");
       await pauseLeadAutomation(lead.id, true);
-      await createLeadActivity({ ownerOpenId: ENV.ownerOpenId, leadId: lead.id, type: "booked", title: `${lead.name} booked a strategy call`, description: `${startsAt.toLocaleString()} · Google Calendar` });
+      await createLeadActivity({ ownerOpenId: lead.ownerOpenId, leadId: lead.id, type: "booked", title: `${lead.name} booked a strategy call`, description: `${startsAt.toLocaleString()} · Google Calendar` });
       return { success: true, eventId: event.id, htmlLink: event.htmlLink, hangoutLink: event.hangoutLink, startsAt: startsAt.toISOString() };
     }),
   }),
   automation: router({
     sources: protectedProcedure.query(({ ctx }) => listWebhookSources(ctx.user.openId)),
-    tasks: protectedProcedure.query(() => listAutomationTasks()),
+    tasks: protectedProcedure.query(({ ctx }) => listAutomationTasks(ctx.user.openId)),
     delivery: protectedProcedure.query(({ ctx }) => getDeliverySettings(ctx.user.openId)),
     saveDelivery: protectedProcedure.input(z.object({ provider: z.enum(["none", "resend", "gmail", "twilio"]), fromEmail: z.string().trim().email().max(320).optional(), enabled: z.boolean() })).mutation(({ ctx, input }) => saveDeliverySettings({ ownerOpenId: ctx.user.openId, provider: input.provider, fromEmail: input.fromEmail || null, enabled: input.enabled })),
     processDue: protectedProcedure.mutation(({ ctx }) => processDueAutomationTasks(ctx.user.openId)),
-    setLeadAutomation: protectedProcedure.input(z.object({ leadId: z.number().int().positive(), paused: z.boolean() })).mutation(({ input }) => pauseLeadAutomation(input.leadId, input.paused)),
+    setLeadAutomation: protectedProcedure.input(z.object({ leadId: z.number().int().positive(), paused: z.boolean() })).mutation(({ ctx, input }) => pauseLeadAutomation(input.leadId, input.paused, ctx.user.openId)),
     sequences: protectedProcedure.query(async ({ ctx }) => {
       const items = await listFollowUpSequences(ctx.user.openId);
       return Promise.all(items.map((item) => getFollowUpSequence(item.id, ctx.user.openId)));
@@ -320,28 +338,28 @@ export const appRouter = router({
       return getFollowUpSequence(sequenceId, ctx.user.openId);
     }),
     toggleSequence: protectedProcedure.input(z.object({ sequenceId: z.number().int().positive(), enabled: z.boolean() })).mutation(({ ctx, input }) => setFollowUpSequenceEnabled(input.sequenceId, ctx.user.openId, input.enabled)),
-    deleteSequence: protectedProcedure.input(z.object({ sequenceId: z.number().int().positive() })).mutation(async ({ input }) => {
-      await deleteFollowUpSequence(input.sequenceId);
+    deleteSequence: protectedProcedure.input(z.object({ sequenceId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      await deleteFollowUpSequence(input.sequenceId, ctx.user.openId);
       return { success: true };
     }),
-    updateSequence: protectedProcedure.input(z.object({ sequenceId: z.number().int().positive(), name: z.string().trim().min(2).max(160).optional(), trigger: z.enum(["new_lead", "qualified", "no_show"]).optional(), enabled: z.boolean().optional() })).mutation(async ({ input }) => {
-      await updateFollowUpSequence(input.sequenceId, { name: input.name, trigger: input.trigger, enabled: input.enabled });
+    updateSequence: protectedProcedure.input(z.object({ sequenceId: z.number().int().positive(), name: z.string().trim().min(2).max(160).optional(), trigger: z.enum(["new_lead", "qualified", "no_show"]).optional(), enabled: z.boolean().optional() })).mutation(async ({ ctx, input }) => {
+      await updateFollowUpSequence(input.sequenceId, ctx.user.openId, { name: input.name, trigger: input.trigger, enabled: input.enabled });
       return { success: true };
     }),
-    deleteStep: protectedProcedure.input(z.object({ stepId: z.number().int().positive() })).mutation(async ({ input }) => {
-      await deleteFollowUpStep(input.stepId);
+    deleteStep: protectedProcedure.input(z.object({ stepId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      await deleteFollowUpStep(input.stepId, ctx.user.openId);
       return { success: true };
     }),
-    updateStep: protectedProcedure.input(z.object({ stepId: z.number().int().positive(), delayMinutes: z.number().int().min(0).max(43200).optional(), channel: z.enum(["email", "sms", "task"]).optional(), subject: z.string().trim().max(220).optional(), body: z.string().trim().min(1).max(5000).optional(), position: z.number().int().optional() })).mutation(async ({ input }) => {
-      await updateFollowUpStep(input.stepId, { delayMinutes: input.delayMinutes, channel: input.channel, subject: input.subject, body: input.body, position: input.position });
+    updateStep: protectedProcedure.input(z.object({ stepId: z.number().int().positive(), delayMinutes: z.number().int().min(0).max(43200).optional(), channel: z.enum(["email", "sms", "task"]).optional(), subject: z.string().trim().max(220).optional(), body: z.string().trim().min(1).max(5000).optional(), position: z.number().int().optional() })).mutation(async ({ ctx, input }) => {
+      await updateFollowUpStep(input.stepId, ctx.user.openId, { delayMinutes: input.delayMinutes, channel: input.channel, subject: input.subject, body: input.body, position: input.position });
       return { success: true };
     }),
-    toggleSource: protectedProcedure.input(z.object({ sourceId: z.number().int().positive(), enabled: z.boolean() })).mutation(async ({ input }) => {
-      await toggleWebhookSource(input.sourceId, input.enabled);
+    toggleSource: protectedProcedure.input(z.object({ sourceId: z.number().int().positive(), enabled: z.boolean() })).mutation(async ({ ctx, input }) => {
+      await toggleWebhookSource(input.sourceId, ctx.user.openId, input.enabled);
       return { success: true };
     }),
-    deleteSource: protectedProcedure.input(z.object({ sourceId: z.number().int().positive() })).mutation(async ({ input }) => {
-      await deleteWebhookSource(input.sourceId);
+    deleteSource: protectedProcedure.input(z.object({ sourceId: z.number().int().positive() })).mutation(async ({ ctx, input }) => {
+      await deleteWebhookSource(input.sourceId, ctx.user.openId);
       return { success: true };
     }),
     createSource: protectedProcedure.input(z.object({ name: z.string().trim().min(2).max(120), source: z.string().trim().min(2).max(80) })).mutation(async ({ ctx, input }) => {
