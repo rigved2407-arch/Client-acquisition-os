@@ -10,6 +10,7 @@ Set these in your Vercel project settings (Settings → Environment Variables):
 - `OAUTH_SERVER_URL` - OAuth server URL
 - `OWNER_OPEN_ID` - Your user's open ID
 - `VITE_APP_ID` - App ID for OAuth
+- `VITE_OAUTH_PORTAL_URL` - Browser-facing OAuth portal URL used by the Sign in button
 
 ### Optional (for integrations)
 - `PUBLIC_APP_URL` - Your Vercel deployment URL (e.g., `https://your-app.vercel.app`)

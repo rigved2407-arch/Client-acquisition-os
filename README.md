@@ -18,6 +18,7 @@ The repository is configured for Vercel. The build produces the browser bundle i
 - `OAUTH_SERVER_URL`
 - `OWNER_OPEN_ID`
 - `VITE_APP_ID`
+- `VITE_OAUTH_PORTAL_URL` (the browser-facing OAuth portal URL)
 - `PUBLIC_APP_URL` (the final HTTPS origin)
 
 Optional provider variables enable Resend, Twilio, Google Calendar, built-in AI, and Stripe subscriptions. Use the exact names in `.env.example`; do not commit secrets. Configure Stripe and Resend webhook URLs against the deployed HTTPS origin and keep their signing secrets enabled before enabling real delivery.
