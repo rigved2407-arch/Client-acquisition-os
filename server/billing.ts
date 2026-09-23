@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import { ENV } from "./_core/env";
 import { getDb } from "./db";
 import { billing } from "../drizzle/schema";
+import { rateLimit } from "./rateLimit";
 
 const PLAN_PRICES: Record<string, { monthly: string; yearly: string }> = {
   starter: { monthly: ENV.stripePriceStarterMonthly, yearly: ENV.stripePriceStarterYearly },
@@ -73,7 +74,7 @@ function extractOwnerOpenId(metadata: Record<string, string | null> | undefined)
 }
 
 export function registerStripeWebhook(app: Express) {
-  app.post("/api/webhooks/stripe", async (req, res) => {
+  app.post("/api/webhooks/stripe", rateLimit({ windowMs: 60_000, max: 120, keyPrefix: "webhook:stripe" }), async (req, res) => {
     try {
       const signatureHeader = String(req.headers["stripe-signature"] || "");
       const rawBody = (req as Express.Request & { rawBody?: Buffer }).rawBody;

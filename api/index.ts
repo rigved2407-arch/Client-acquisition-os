@@ -12,6 +12,7 @@ import { registerStripeWebhook } from "../server/billing";
 import { appRouter } from "../server/routers";
 import { createContext } from "../server/_core/context";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+import { rateLimit } from "../server/rateLimit";
 
 let app: express.Express | null = null;
 
@@ -19,8 +20,8 @@ function getApp(): express.Express {
   if (app) return app;
 
   app = express();
-  app.use(express.json({ limit: "50mb", verify: (req, _res, buf) => { (req as express.Request & { rawBody?: Buffer }).rawBody = Buffer.from(buf); } }));
-  app.use(express.urlencoded({ limit: "50mb", extended: true }));
+  app.use(express.json({ limit: "2mb", verify: (req, _res, buf) => { (req as express.Request & { rawBody?: Buffer }).rawBody = Buffer.from(buf); } }));
+  app.use(express.urlencoded({ limit: "2mb", extended: true }));
 
   // Security headers
   app.use((_req, res, next) => {
@@ -28,6 +29,8 @@ function getApp(): express.Express {
     res.setHeader("X-Frame-Options", "DENY");
     res.setHeader("X-XSS-Protection", "1; mode=block");
     res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    res.setHeader("X-Download-Options", "noopen");
+    res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
     res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
     next();
   });
@@ -43,6 +46,7 @@ function getApp(): express.Express {
   // tRPC middleware
   app.use(
     "/api/trpc",
+    rateLimit({ windowMs: 60_000, max: 120, keyPrefix: "trpc" }),
     createExpressMiddleware({
       router: appRouter,
       createContext,

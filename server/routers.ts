@@ -154,9 +154,9 @@ export const appRouter = router({
   growth: router({
     overview: protectedProcedure.query(async ({ ctx }) => {
       const [liveLeads, liveActivities, settings] = await Promise.all([getLeads(ctx.user.openId), getActivities(ctx.user.openId), getCoachSettings(ctx.user.openId)]);
-      const usingDemo = liveLeads.length === 0;
-      const items = usingDemo ? demoLeads : liveLeads;
-      const activityItems = usingDemo ? demoActivities : liveActivities;
+      const usingDemo = false;
+      const items = liveLeads;
+      const activityItems = liveActivities;
       return { leads: items, activities: activityItems, stats: statsFor(items, settings.averageDealSize), usingDemo };
     }),
     analytics: protectedProcedure.query(async ({ ctx }) => {

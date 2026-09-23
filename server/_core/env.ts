@@ -35,8 +35,19 @@ export const ENV = {
 };
 
 export function validateRequiredEnv(): void {
-  const required = ["DATABASE_URL", "JWT_SECRET", "OAUTH_SERVER_URL", "OWNER_OPEN_ID", "VITE_APP_ID"];
+  const required = ["DATABASE_URL", "JWT_SECRET", "OAUTH_SERVER_URL", "OWNER_OPEN_ID", "VITE_APP_ID", "PUBLIC_APP_URL"];
   const missing = required.filter((key) => !process.env[key]);
+  if (process.env.JWT_SECRET && process.env.JWT_SECRET.length < 32) {
+    missing.push("JWT_SECRET (must be at least 32 characters)");
+  }
+  if (process.env.PUBLIC_APP_URL) {
+    try {
+      const url = new URL(process.env.PUBLIC_APP_URL);
+      if (!['http:', 'https:'].includes(url.protocol)) missing.push("PUBLIC_APP_URL (must use http or https)");
+    } catch {
+      missing.push("PUBLIC_APP_URL (must be a valid URL)");
+    }
+  }
   if (missing.length > 0) {
     console.error(`[ENV] FATAL: Missing required environment variables: ${missing.join(", ")}`);
     console.error("[ENV] Please set these in your .env file or environment.");

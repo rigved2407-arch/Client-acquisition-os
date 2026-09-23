@@ -125,7 +125,7 @@ export function registerWebhookRoutes(app: Express) {
       return res.status(400).json({ error: error instanceof Error ? error.message : "Invalid reply payload" });
     }
   });
-  app.post("/api/webhooks/resend", async (req, res) => {
+  app.post("/api/webhooks/resend", rateLimit({ windowMs: 60_000, max: 120, keyPrefix: "webhook:resend" }), async (req, res) => {
     try {
       const rawBody = (req as Request & { rawBody?: Buffer }).rawBody;
       if (!ENV.resendWebhookSecret) return res.status(503).json({ error: "Resend webhook is not configured" });
