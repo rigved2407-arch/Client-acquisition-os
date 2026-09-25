@@ -9,6 +9,7 @@ import Automations from "@/pages/Automations";
 import LeadDetail from "@/pages/LeadDetail";
 import ChatHistory from "@/pages/ChatHistory";
 import Onboarding from "@/pages/Onboarding";
+import Legal from "@/pages/Legal";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
@@ -26,6 +27,7 @@ function Router() {
       <Route path="/leads/:id" component={LeadDetail} />
       <Route path="/chat-history" component={ChatHistory} />
       <Route path="/onboarding" component={Onboarding} />
+      <Route path="/legal" component={Legal} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>

@@ -26,8 +26,8 @@ export default function Onboarding() {
   const [deliveryProvider, setDeliveryProvider] = useState<"none" | "resend" | "twilio">("none");
   const [fromEmail, setFromEmail] = useState("");
 
-  const saveSettings = trpc.automation.saveCoachSettings.useMutation({ onSuccess: () => toast.success("Settings saved") });
-  const saveDelivery = trpc.automation.saveDelivery.useMutation({ onSuccess: () => toast.success("Delivery configured") });
+  const saveSettings = trpc.automation.saveCoachSettings.useMutation({ onSuccess: () => toast.success("Settings saved"), onError: () => toast.error("Could not save practice settings") });
+  const saveDelivery = trpc.automation.saveDelivery.useMutation({ onSuccess: () => toast.success("Delivery configured"), onError: () => toast.error("Could not save delivery settings") });
   const createSource = trpc.automation.createSource.useMutation({ onSuccess: (data) => { toast.success("Webhook created"); setWebhookUrl(data.path); } });
   const [webhookUrl, setWebhookUrl] = useState<string | null>(null);
 
@@ -38,7 +38,8 @@ export default function Onboarding() {
 
   function goNext() {
     if (currentStep === 1) {
-      saveSettings.mutate({ averageDealSize: Number(profile.avgDealSize), calendarStartHour: Number(profile.startHour), calendarEndHour: Number(profile.endHour) });
+      saveSettings.mutate({ averageDealSize: Number(profile.avgDealSize), calendarStartHour: Number(profile.startHour), calendarEndHour: Number(profile.endHour) }, { onSuccess: () => setCurrentStep((step) => Math.min(step + 1, steps.length - 1)) });
+      return;
     }
     if (currentStep < steps.length - 1) setCurrentStep(currentStep + 1);
   }
@@ -139,7 +140,7 @@ export default function Onboarding() {
                   <Input value={fromEmail} onChange={(e) => setFromEmail(e.target.value)} placeholder="coach@yourdomain.com" className="mt-1" />
                 </div>
               )}
-              <Button disabled={saveDelivery.isPending} onClick={() => { saveDelivery.mutate({ provider: deliveryProvider, fromEmail: fromEmail || undefined, enabled: deliveryProvider !== "none" }); goNext(); }} className="mt-6 w-full bg-[#173b2d] text-[#eff7de]">
+              <Button disabled={saveDelivery.isPending} onClick={() => saveDelivery.mutate({ provider: deliveryProvider, fromEmail: fromEmail || undefined, enabled: deliveryProvider !== "none" }, { onSuccess: () => setCurrentStep((step) => Math.min(step + 1, steps.length - 1)) })} className="mt-6 w-full bg-[#173b2d] text-[#eff7de]">
                 Save & Continue
               </Button>
             </div>
@@ -194,7 +195,7 @@ export default function Onboarding() {
                 </div>
               </div>
               <Button onClick={finishOnboarding} className="mt-6 bg-[#173b2d] text-[#eff7de] hover:bg-[#24533e]">
-                <CheckCircle2 className="mr-2 h-4 w-4" /> Start free trial
+                <CheckCircle2 className="mr-2 h-4 w-4" /> Finish setup
               </Button>
             </div>
           )}
