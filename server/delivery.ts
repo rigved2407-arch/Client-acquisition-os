@@ -1,6 +1,5 @@
 import { ENV } from "./_core/env";
 import type { Express, Request, Response } from "express";
-import { sdk } from "./_core/sdk";
 import { getDeliverySettings, listDueAutomationTasks, markAutomationTaskAttempt, markAutomationTaskBlocked, markAutomationTaskFailed, markAutomationTaskSent } from "./db";
 
 type DeliverySummary = { scanned: number; sent: number; blocked: number; failed: number; skipped: number };
@@ -99,10 +98,12 @@ export async function processDueAutomationTasks(ownerOpenId = ENV.ownerOpenId): 
 export function registerDeliveryRoutes(app: Express) {
   app.post("/api/scheduled/process-delivery", async (req: Request, res: Response) => {
     try {
-      const user = await sdk.authenticateRequest(req);
-      if (!user.isCron || !user.taskUid) return res.status(403).json({ error: "cron-only" });
+      const authorization = req.headers.authorization;
+      if (!ENV.cronSecret || authorization !== `Bearer ${ENV.cronSecret}`) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
       const summary = await processDueAutomationTasks(ENV.ownerOpenId);
-      return res.json({ ok: true, taskUid: user.taskUid, summary });
+      return res.json({ ok: true, summary });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return res.status(500).json({ error: message, timestamp: new Date().toISOString() });

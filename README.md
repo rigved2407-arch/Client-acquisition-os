@@ -15,10 +15,12 @@ The repository is configured for Vercel. The build produces the browser bundle i
 
 - `DATABASE_URL`
 - `JWT_SECRET` (at least 32 characters)
-- `OAUTH_SERVER_URL`
 - `OWNER_OPEN_ID`
-- `VITE_APP_ID`
-- `VITE_OAUTH_PORTAL_URL` (the browser-facing OAuth portal URL)
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
+- `CRON_SECRET`
 - `PUBLIC_APP_URL` (the final HTTPS origin)
 
 Optional provider variables enable Resend, Twilio, Google Calendar, built-in AI, and Stripe subscriptions. Use the exact names in `.env.example`; do not commit secrets. Configure Stripe and Resend webhook URLs against the deployed HTTPS origin and keep their signing secrets enabled before enabling real delivery.
@@ -26,7 +28,7 @@ Optional provider variables enable Resend, Twilio, Google Calendar, built-in AI,
 ## Release checklist
 
 - Apply and verify all Drizzle migrations against the production database.
-- Confirm OAuth redirect URLs and `PUBLIC_APP_URL` use the same HTTPS origin.
+- Confirm Supabase Auth redirect URLs and `PUBLIC_APP_URL` use the same HTTPS origin.
 - Configure a verified sending domain and unsubscribe/reply webhooks before enabling automated outreach.
 - Configure Stripe products and price IDs, then test checkout, portal, and subscription webhook events in Stripe test mode.
 - Create a test webhook source and submit a consented lead; verify qualification, follow-up scheduling, signed booking, reply pause, and unsubscribe behavior.

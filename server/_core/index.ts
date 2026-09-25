@@ -3,7 +3,6 @@ import express from "express";
 import { createServer } from "http";
 import net from "net";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
-import { registerOAuthRoutes } from "./oauth";
 import { registerStorageProxy } from "./storageProxy";
 import { registerGoogleCalendarRoutes } from "../googleCalendar";
 import { registerWebhookRoutes } from "../webhooks";
@@ -61,7 +60,6 @@ async function startServer() {
   addSecurityHeaders(app);
 
   registerStorageProxy(app);
-  registerOAuthRoutes(app);
   registerGoogleCalendarRoutes(app);
   registerStripeWebhook(app);
   registerWebhookRoutes(app);

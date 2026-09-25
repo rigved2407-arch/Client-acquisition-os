@@ -14,6 +14,9 @@ export const ENV = {
   ownerOpenId: requireEnv("OWNER_OPEN_ID"),
   ownerName: process.env.OWNER_NAME ?? "",
   publicAppUrl: requireEnv("PUBLIC_APP_URL"),
+  supabaseUrl: requireEnv("SUPABASE_URL"),
+  supabaseAnonKey: requireEnv("SUPABASE_ANON_KEY"),
+  cronSecret: process.env.CRON_SECRET ?? "",
   isProduction: process.env.NODE_ENV === "production",
   forgeApiUrl: requireEnv("BUILT_IN_FORGE_API_URL"),
   forgeApiKey: requireEnv("BUILT_IN_FORGE_API_KEY"),
@@ -35,7 +38,7 @@ export const ENV = {
 };
 
 export function validateRequiredEnv(): void {
-  const required = ["DATABASE_URL", "JWT_SECRET", "OAUTH_SERVER_URL", "OWNER_OPEN_ID", "VITE_APP_ID", "PUBLIC_APP_URL"];
+  const required = ["DATABASE_URL", "JWT_SECRET", "OWNER_OPEN_ID", "PUBLIC_APP_URL", "SUPABASE_URL", "SUPABASE_ANON_KEY"];
   const missing = required.filter((key) => !process.env[key]);
   if (process.env.JWT_SECRET && process.env.JWT_SECRET.length < 32) {
     missing.push("JWT_SECRET (must be at least 32 characters)");
